@@ -92,6 +92,7 @@ app/
 static/
   index.html.app.js / styles.css          # 前端单页（HTML + 逻辑 + 样式）
 docs/            # ★ 方案与设计文档（扩展功能的依据）
+  OVERVIEW.md    # ★ 开发前地基快照（先读）——当前状态/关键坑/下一步
   PLAN.md        # 总方案（动机、决策、环境、UI 设计语言）
   DESIGN.md      # 架构设计详解
   API.md         # 接口契约
