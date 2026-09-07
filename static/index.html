@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>闪电下载 · 全网视频一键存到本地</title>
+  <meta name="description" content="一条链接，下遍全网。批量解析、超清画质、字幕翻译、AI 摘要，随时随地浏览器/手机都能下载视频。" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: { brand: { DEFAULT: '#1777ff', dark: '#1666e6', soft: '#eaf2ff' } },
+          fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'] },
+        },
+      },
+    };
+  </script>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body class="bg-white text-slate-900 antialiased">
+  <!-- ======= Nav ======= -->
+  <header class="sticky top-0 z-50 bg-white/80 backdrop-blur border-b border-slate-100">
+    <div class="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between">
+      <a href="#top" class="flex items-center gap-2 font-extrabold text-lg tracking-tight">
+        <span class="inline-flex w-8 h-8 items-center justify-center rounded-lg bg-brand text-white text-sm shadow-sm">⚡</span>
+        <span>闪电下载<span class="text-brand">.</span></span>
+      </a>
+      <nav class="hidden sm:flex items-center gap-6 text-sm font-medium text-slate-500">
+        <a href="#tool" class="hover:text-slate-900 transition">解析工具</a>
+        <a href="#features" class="hover:text-slate-900 transition">特色</a>
+        <a href="#pricing" class="hover:text-slate-900 transition">定价</a>
+        <a href="#faq" class="hover:text-slate-900 transition">帮助</a>
+      </nav>
+      <a href="#pricing" class="inline-flex items-center gap-1.5 rounded-full bg-brand font-semibold text-white px-4 py-2 text-sm hover:bg-brand-dark transition">
+        升级 PRO <span class="text-amber-300">👑</span>
+      </a>
+    </div>
+  </header>
+
+  <!-- ======= Hero ======= -->
+  <section id="top" class="relative overflow-hidden">
+    <div class="absolute inset-0 pointer-events-none -z-10 bg-[radial-gradient(60%_50%_at_50%_0%,#eaf2ff_0%,#ffffff_70%)]"></div>
+    <div class="max-w-4xl mx-auto px-4 pt-16 pb-10 text-center">
+      <span class="inline-flex items-center gap-2 rounded-full bg-brand-soft text-brand text-xs font-semibold px-3 py-1.5 mb-6">
+        已支持 1000+ 站点 · 无水印 · 免费试用
+      </span>
+      <h1 class="text-4xl md:text-6xl font-black leading-tight tracking-tight text-slate-900">
+        一条链接，<span class="text-brand">下遍全网</span>
+      </h1>
+      <p class="mt-4 text-base md:text-lg text-slate-500 font-medium">
+        视频 / 音频 / 字幕 / AI 摘要，一次搞定。
+        <br class="sm:hidden" />粘贴链接，选好画质，一键保存到本地。
+      </p>
+
+      <!-- 输入区 -->
+      <div id="tool" class="mt-8 max-w-2xl mx-auto">
+        <div class="rounded-2xl bg-white border border-slate-200 shadow-[0_10px_40px_-12px_rgba(23,119,255,0.25)] p-2 flex flex-col sm:flex-row gap-2">
+          <textarea id="urlInput" rows="1" placeholder="粘贴视频链接，支持一次粘贴多个（每行一个）…"
+            class="flex-1 resize-none rounded-xl px-4 py-3 text-sm text-slate-700 placeholder-slate-400 outline-none focus:ring-2 focus:ring-brand/60 transition min-h-[48px]"></textarea>
+          <button id="parseBtn" class="shrink-0 rounded-xl bg-brand text-white font-semibold px-6 py-3 text-sm hover:bg-brand-dark transition shadow-sm">
+            开始解析
+          </button>
+        </div>
+        <div class="mt-3 flex flex-wrap items-center justify-center gap-2 text-xs text-slate-500">
+          <span>已支持：</span>
+          <span class="chip chip-sky">YouTube</span>
+          <span class="chip chip-amber">Bilibili 哔哩哔哩</span>
+          <span class="chip chip-rose">TikTok</span>
+          <span class="chip chip-emerald">Instagram</span>
+          <span class="chip chip-violet">X / Twitter</span>
+          <span class="chip chip-sky">Vimeo</span>
+          <span class="chip chip-amber">Archive.org</span>
+          <span class="chip chip-rose">小红书</span>
+          <span class="chip chip-emerald">豆瓣视频</span>
+        </div>
+        <p class="mt-4 text-sm text-slate-400">没有可见的下载按钮？用我们就对了。</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ======= 解析结果面板（紧随输入区） ======= -->
+  <section id="resultPanel" class="hidden max-w-3xl mx-auto px-4 pb-6">
+    <div class="rounded-2xl bg-white border border-slate-200 shadow-lg p-6 animate-rise">
+      <div class="flex items-start gap-4">
+        <img id="thumb" src="" alt="" class="hidden w-40 rounded-lg object-cover border border-slate-100 shrink-0" />
+        <div class="min-w-0">
+          <div id="extBadge" class="chip chip-brand mb-2">通用视频</div>
+          <h3 id="dlTitle" class="font-bold text-slate-900 text-lg leading-snug">解析中…</h3>
+          <p id="dlMeta" class="text-sm text-slate-500 mt-1"></p>
+        </div>
+      </div>
+
+      <div class="mt-5">
+        <div class="flex items-center justify-between mb-2">
+          <h4 class="text-sm font-semibold text-slate-600">选择清晰度与格式</h4>
+          <button id="addToBatch" class="text-sm text-brand hover:text-brand-dark font-medium">+ 加入批量</button>
+        </div>
+        <div id="formatList" class="space-y-2"></div>
+        <div class="mt-4 flex gap-3">
+          <button id="downloadBtn" class="flex-1 rounded-xl bg-brand text-white font-bold py-3 text-sm hover:bg-brand-dark transition shadow-sm">⬇️ 下载</button>
+          <button id="copyLink" class="rounded-xl border border-slate-200 text-slate-600 px-4 py-3 text-sm hover:bg-slate-50 transition">复制链接</button>
+        </div>
+      </div>
+
+      <!-- 下载进度 -->
+      <div id="downloadProgress" class="hidden mt-4">
+        <div class="flex items-center justify-between text-xs text-slate-500 mb-1">
+          <span id="progStatus">下载中…</span>
+          <span id="progPct">0%</span>
+        </div>
+        <div class="h-2 rounded-full bg-slate-100 overflow-hidden">
+          <div id="progBar" class="h-full bg-brand transition-all" style="width:0%"></div>
+        </div>
+        <div class="flex items-center justify-between text-xs text-slate-400 mt-1">
+          <span id="progSpeed"></span>
+          <a id="progDownload" href="#" class="hidden text-brand font-bold">下载文件</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ======= 批量队列面板 ======= -->
+  <section id="batchPanel" class="hidden max-w-3xl mx-auto px-4 pb-6">
+    <div class="rounded-2xl bg-white border border-slate-200 shadow-lg p-6 animate-rise">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="font-bold text-slate-900">🗂️ 批量下载队列</h3>
+        <button id="clearBatch" class="text-sm text-slate-400 hover:text-slate-600">清空已完成</button>
+      </div>
+      <div id="batchList" class="space-y-3"></div>
+    </div>
+  </section>
+
+  <!-- ======= 信任背书条 ======= -->
+  <section class="border-y border-slate-100 bg-slate-50/60">
+    <div class="max-w-6xl mx-auto px-4 py-5 flex flex-wrap justify-center gap-x-8 gap-y-2 text-sm text-slate-500">
+      <span class="flex items-center gap-2"><span class="text-brand">✕</span> 无广告</span>
+      <span class="flex items-center gap-2"><span class="text-brand">✕</span> 无水印</span>
+      <span class="flex items-center gap-2"><span class="text-brand">✦</span> 上百站点</span>
+      <span class="flex items-center gap-2"><span class="text-brand">◔</span> 隐私优先 · 到期自动清理</span>
+      <span class="flex items-center gap-2"><span class="text-brand">⚡</span> 极速并发</span>
+    </div>
+  </section>
+
+  <!-- ======= 功能卡片 ======= -->
+  <section id="features" class="max-w-6xl mx-auto px-4 py-16">
+    <div class="text-center mb-10">
+      <h2 class="text-3xl font-black text-slate-900">为什么选闪电下载？</h2>
+      <p class="mt-2 text-slate-500">一个工具，覆盖你所有视频保存诉求</p>
+    </div>
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+      <div class="feature-card">
+        <div class="feature-icon bg-brand-soft text-brand">🔗</div>
+        <h3 class="font-bold text-slate-900">万能解析</h3>
+        <p class="text-sm text-slate-500 mt-1">粘贴任意平台链接，自动识别站点与全部清晰度</p>
+        <span class="chip chip-sky mt-3">1000+ 站点</span>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon bg-emerald-50 text-emerald-600">🗂️</div>
+        <h3 class="font-bold text-slate-900">批量下载</h3>
+        <p class="text-sm text-slate-500 mt-1">一次粘贴多个链接，排队逐个下载，适合收藏夹</p>
+        <span class="chip chip-emerald mt-3">一次最多 8 个</span>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon bg-violet-50 text-violet-600">🎬</div>
+        <h3 class="font-bold text-slate-900">超清画质</h3>
+        <p class="text-sm text-slate-500 mt-1">可选 720p / 1080p / 4K，音视频流智能合并</p>
+        <span class="chip chip-violet mt-3">4K / 60fps</span>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon bg-amber-50 text-amber-600">🌐</div>
+        <h3 class="font-bold text-slate-900">字幕翻译</h3>
+        <p class="text-sm text-slate-500 mt-1">提取视频字幕，一键翻译成你的语言</p>
+        <span class="chip chip-amber mt-3">多语言</span>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon bg-rose-50 text-rose-600">🤖</div>
+        <h3 class="font-bold text-slate-900">AI 摘要</h3>
+        <p class="text-sm text-slate-500 mt-1">没空看完？一键生成视频要点与关键词</p>
+        <span class="chip chip-rose mt-3">PRO 专属</span>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon bg-sky-50 text-sky-600">🔒</div>
+        <h3 class="font-bold text-slate-900">隐私安全</h3>
+        <p class="text-sm text-slate-500 mt-1">服务器不留存，文件到期自动清理</p>
+        <span class="chip chip-sky mt-3">到期删除</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ======= 字幕 + AI 摘要 ======= -->
+  <section class="max-w-3xl mx-auto px-4 py-6">
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <div class="rounded-2xl bg-white border border-slate-200 shadow p-6">
+        <h3 class="font-bold text-slate-900 mb-3">🌐 字幕提取 & 翻译</h3>
+        <input id="subUrl" type="url" placeholder="粘贴视频链接（纯文本）" class="w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-brand/60" />
+        <div class="flex gap-2 mt-3">
+          <button id="subBtn" class="flex-1 rounded-lg bg-slate-900 text-white font-semibold py-2.5 text-sm hover:bg-slate-800 transition">提取</button>
+          <button id="subTranslate" class="flex-1 rounded-lg bg-brand text-white font-semibold py-2.5 text-sm hover:bg-brand-dark transition">翻译成中文</button>
+        </div>
+        <div id="subResult" class="mt-4 hidden">
+          <div class="flex items-center justify-between mb-2">
+            <span id="subMeta" class="text-xs text-slate-400"></span>
+            <div class="flex gap-2">
+              <a id="subDl" href="#" class="text-xs text-brand font-semibold">下载 SRT</a>
+            </div>
+          </div>
+          <pre id="subText" class="max-h-48 overflow-auto rounded-lg bg-slate-50 p-3 text-xs text-slate-600 whitespace-pre-wrap"></pre>
+        </div>
+      </div>
+
+      <div class="rounded-2xl bg-white border border-slate-200 shadow p-6">
+        <h3 class="font-bold text-slate-900 mb-1">🤖 AI 视频摘要 <span class="chip chip-rose ml-1">PRO</span></h3>
+        <p class="text-xs text-slate-400 mb-3">用字幕一键生成要点与关键词</p>
+        <input id="sumUrl" type="url" placeholder="粘贴视频链接（纯文本）" class="w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-brand/60" />
+        <button id="sumBtn" class="w-full mt-3 rounded-lg bg-gradient-to-r from-brand to-[#4f9bff] text-white font-semibold py-2.5 text-sm hover:opacity-95 transition">👑 生成摘要</button>
+        <div id="sumResult" class="mt-4 hidden">
+          <div class="rounded-lg bg-brand-soft p-3 text-sm text-slate-700 whitespace-pre-wrap leading-relaxed" id="sumText"></div>
+          <button id="sumCopy" class="mt-2 text-xs text-brand font-semibold">复制摘要</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ======= 定价 / PRO ======= -->
+  <section id="pricing" class="max-w-5xl mx-auto px-4 py-16">
+    <div class="text-center mb-10">
+      <h2 class="text-3xl font-black text-slate-900">选择你的方案</h2>
+      <p class="mt-2 text-slate-500">免费够用，PRO 更省心</p>
+    </div>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6 items-stretch">
+      <!-- 免费卡 -->
+      <div class="rounded-2xl bg-white border border-slate-200 shadow p-8 flex flex-col">
+        <h3 class="font-bold text-slate-900 text-lg">免费</h3>
+        <div class="mt-3 flex items-end gap-1"><span class="text-4xl font-black">¥0</span><span class="text-slate-400 mb-1">/ 永久</span></div>
+        <ul class="mt-6 space-y-3 text-sm text-slate-600">
+          <li class="flex gap-2"><span class="text-emerald-500">✓</span> 单链接解析 & 标准画质</li>
+          <li class="flex gap-2"><span class="text-emerald-500">✓</span> 无水印下载</li>
+          <li class="flex gap-2"><span class="text-slate-300">✕</span> 批量下载</li>
+          <li class="flex gap-2"><span class="text-slate-300">✕</span> 超清 4K / 60fps</li>
+          <li class="flex gap-2"><span class="text-slate-300">✕</span> 字幕翻译</li>
+          <li class="flex gap-2"><span class="text-slate-300">✕</span> AI 视频摘要</li>
+        </ul>
+        <button class="mt-8 rounded-xl border border-slate-200 text-slate-600 font-semibold py-3 text-sm hover:bg-slate-50 transition">开始使用</button>
+      </div>
+      <!-- PRO 卡 -->
+      <div class="relative rounded-2xl bg-white border-2 border-brand shadow-[0_18px_50px_-12px_rgba(23,119,255,0.35)] p-8 flex flex-col -mt-2 md:-mt-4">
+        <span class="absolute -top-3 left-8 rounded-full bg-brand text-white text-xs font-bold px-3 py-1">推荐 · 最受欢迎</span>
+        <div class="flex items-center justify-between">
+          <h3 class="font-bold text-slate-900 text-lg">PRO <span class="text-amber-500">👑</span></h3>
+          <span class="chip chip-brand">限时优惠</span>
+        </div>
+        <div class="mt-3 flex items-end gap-1"><span class="text-4xl font-black text-brand">¥19</span><span class="text-slate-400 mb-1">/ 月</span></div>
+        <ul class="mt-6 space-y-3 text-sm text-slate-700">
+          <li class="flex gap-2"><span class="text-brand">✓</span> 全部免费功能</li>
+          <li class="flex gap-2"><span class="text-brand">✓</span> 批量下载（一次最多 8 条）</li>
+          <li class="flex gap-2"><span class="text-brand">✓</span> 超清 4K / 60fps / 无损</li>
+          <li class="flex gap-2"><span class="text-brand">✓</span> 字幕翻译（多语言）</li>
+          <li class="flex gap-2"><span class="text-brand">✓</span> AI 视频摘要（无限次）</li>
+          <li class="flex gap-2"><span class="text-brand">✓</span> 更高速率 & 优先排队</li>
+        </ul>
+        <button id="upgradeBtn" class="mt-8 rounded-xl bg-brand text-white font-bold py-3 text-sm hover:bg-brand-dark transition shadow-sm">立即升级 PRO</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ======= 升级 CTA 横幅 ======= -->
+  <section class="max-w-5xl mx-auto px-4 pb-16">
+    <div class="rounded-3xl bg-gradient-to-r from-brand to-[#4f9bff] text-white p-10 md:p-14 text-center shadow-xl">
+      <h2 class="text-3xl font-black">解锁 PRO，高效下载并总结全网视频</h2>
+      <p class="mt-3 text-white/80">批量、超清、字幕翻译、无限 AI 摘要——一个会员全搞定</p>
+      <button id="ctaUpgrade" class="mt-6 rounded-full bg-white text-brand font-bold px-8 py-3 hover:shadow-lg transition">立即升级</button>
+    </div>
+  </section>
+
+  <!-- ======= FAQ ======= -->
+  <section id="faq" class="max-w-3xl mx-auto px-4 pb-16">
+    <h2 class="text-3xl font-black text-slate-900 text-center mb-8">常见问题</h2>
+    <div class="space-y-3">
+      <details class="group rounded-xl border border-slate-200 p-4 bg-white">
+        <summary class="flex items-center justify-between cursor-pointer font-semibold text-slate-800 list-none">下载会加密或加广告吗？<span class="group-open:rotate-180 transition text-slate-400">▾</span></summary>
+        <p class="mt-2 text-sm text-slate-500">不会。我们直接提供原始文件，无水印、无广告，下载即你所有。</p>
+      </details>
+      <details class="group rounded-xl border border-slate-200 p-4 bg-white">
+        <summary class="flex items-center justify-between cursor-pointer font-semibold text-slate-800 list-none">手机能用吗？<span class="group-open:rotate-180 transition text-slate-400">▾</span></summary>
+        <p class="mt-2 text-sm text-slate-500">可以，本页面完全响应式，手机浏览器直接访问即可解析下载。</p>
+      </details>
+      <details class="group rounded-xl border border-slate-200 p-4 bg-white">
+        <summary class="flex items-center justify-between cursor-pointer font-semibold text-slate-800 list-none">部分平台下载失败怎么办？<span class="group-open:rotate-180 transition text-slate-400">▾</span></summary>
+        <p class="mt-2 text-sm text-slate-500">部分站点有登录、地区或版权限制，会提示明确原因。若持续失败，可能是平台反爬或链接已失效。</p>
+      </details>
+      <details class="group rounded-xl border border-slate-200 p-4 bg-white">
+        <summary class="flex items-center justify-between cursor-pointer font-semibold text-slate-800 list-none">下载文件会保留多久？<span class="group-open:rotate-180 transition text-slate-400">▾</span></summary>
+        <p class="mt-2 text-sm text-slate-500">服务器仅在下载会话期间临时保存，到期自动清理，不留存你的内容。</p>
+      </details>
+    </div>
+  </section>
+
+  <!-- ======= Footer ======= -->
+  <footer class="border-t border-slate-100 bg-slate-50/60">
+    <div class="max-w-6xl mx-auto px-4 py-10 text-center text-sm text-slate-400">
+      <p class="font-semibold text-slate-500">⚡ 闪电下载 · 全网视频一键存</p>
+      <p class="mt-4 mx-auto max-w-2xl leading-relaxed">
+        免责声明：本站下载内容仅供个人学习、研究及备份使用，请遵守原始平台的使用条款与版权法律法规，<b>严禁</b>用于侵权、转售或任何商业用途。因违规使用产生的一切后果由使用者自行承担。
+      </p>
+      <p class="mt-4">© 2026 闪电下载 · 沪ICP备XXXXXXXX号 · 联系方式：support@example.com</p>
+    </div>
+  </footer>
+
+  <!-- PRO 升级弹窗 -->
+  <div id="proModal" class="hidden fixed inset-0 z-[100] items-center justify-center bg-slate-900/40 backdrop-blur-sm">
+    <div class="bg-white rounded-2xl shadow-2xl p-8 max-w-sm w-full mx-4 animate-rise">
+      <div class="text-center">
+        <div class="text-4xl">👑</div>
+        <h3 class="mt-2 font-black text-slate-900 text-xl">开通 PRO 会员</h3>
+        <p class="mt-1 text-sm text-slate-500">解锁批量、超清 4K、字幕翻译与无限 AI 摘要</p>
+      </div>
+      <div class="mt-6 space-y-2">
+        <button id="payMonth" class="w-full rounded-xl border-2 border-brand bg-brand-soft text-brand font-bold py-3">¥19 / 月 · 开通</button>
+        <button id="payYear" class="w-full rounded-xl border border-slate-200 text-slate-600 font-semibold py-3 hover:bg-slate-50">¥199 / 年 · 省 13%</button>
+      </div>
+      <p class="mt-4 text-center text-xs text-slate-400">支付能力即将上线，敬请期待！</p>
+      <button id="proClose" class="mt-3 w-full text-sm text-slate-400 hover:text-slate-600">暂不升级，继续免费使用</button>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div id="toast" class="hidden fixed bottom-6 left-1/2 -translate-x-1/2 z-50 rounded-full bg-slate-900 text-white text-sm font-medium px-5 py-3 shadow-lg"></div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

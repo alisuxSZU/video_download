@@ -1,0 +1,10 @@
+# 核心依赖
+# 版本用 >= 便于更新（yt-dlp 更新频繁，站点改版需升版回归）
+fastapi>=0.141.0
+uvicorn[standard]>=0.30.0
+pydantic>=2.9.0
+httpx>=0.27.0
+python-dotenv>=1.0.0
+yt-dlp>=2026.08.19
+# 抖音视频下载（0.1.2）：服务端无头浏览器，复用系统 Chrome，无需下载 Chromium
+playwright>=1.40.0
