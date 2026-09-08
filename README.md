@@ -68,10 +68,11 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1
 | 能力 | 说明 |
 |---|---|
 | 万能解析 | 支持数百平台；粘贴即出标题/缩略图/时长/全部清晰度与格式 |
-| 格式多选下载 | 每档标注分辨率/大小/是否需合并；选高清档自动合并音视频 |
+| 格式多选下载 | 每档标注分辨率/格式/大小，卡片去噪（不再标「需合并」）；选高清档后台自动合并音视频 |
 | 批量下载 | 一次解析多个链接或粘贴多个 URL，逐条进度轮询 |
 | 字幕提取/翻译 | 手动>自动字幕；一键翻译成简体中文（LLM） |
-| AI 视频摘要 | 由字幕生成分点摘要 + 关键词（LLM，仅服务端持 Key） |
+| AI 视频摘要 | 由字幕生成**结构化解说**：主题 + 章节·时间轴 + 思维导图 + 关键词 + Markdown 全文（LLM，仅服务端持 Key） |
+| AI 问答 | 对视频**气泡聊天式追问**（SSE 流式），可按「第几分钟讲了什么」定位到具体时间区间 |
 | PRO 定价展示 | 免费 vs PRO 权益对比、升级引导（v1 占位，未接真实支付/无 DB） |
 | 隐私安全 | URL/SSRF 校验、限流、安全响应头、错误脱敏、临时文件过期自动清理 |
 
@@ -90,14 +91,12 @@ app/
   ai.py          # OpenAI 兼容 LLM：翻译 + 摘要
   routes.py      # 全部 API 端点
 static/
-  index.html.app.js / styles.css          # 前端单页（HTML + 逻辑 + 样式）
+  index.html / app.js / styles.css         # 前端单页（HTML + 逻辑 + 样式）
 docs/            # ★ 方案与设计文档（扩展功能的依据）
-  OVERVIEW.md    # ★ 开发前地基快照（先读）——当前状态/关键坑/下一步
-  PLAN.md        # 总方案（动机、决策、环境、UI 设计语言）
+  PLAN.md        # ★ 先读：总方案 + 当前状态 + 关键坑 + 下一步（含原 OVERVIEW/ROADMAP）
   DESIGN.md      # 架构设计详解
   API.md         # 接口契约
   SECURITY.md    # 安全清单与威胁模型
-  ROADMAP.md     # 演进方向（v2）
   CHANGELOG.md   # 里程碑实现进度
 ```
 
@@ -110,6 +109,7 @@ docs/            # ★ 方案与设计文档（扩展功能的依据）
 | 方法 | 路径 | 用途 |
 |---|---|---|
 | GET | `/api/health` | 存活探针 |
+| GET | `/api/thumbnail` | 服务端代理封面图（防盗链） |
 | POST | `/api/parse` | 解析链接元数据 + 全部格式 |
 | POST | `/api/download` | 创建下载任务 |
 | POST | `/api/download/batch` | 批量创建下载任务 |
@@ -117,14 +117,18 @@ docs/            # ★ 方案与设计文档（扩展功能的依据）
 | GET | `/api/jobs/{job_id}/file` | 下载成品文件（流式） |
 | DELETE | `/api/jobs/{job_id}` | 取消并清理 |
 | POST | `/api/subtitles` | 提取/翻译字幕 |
-| POST | `/api/ai/summary` | 生成 AI 摘要 |
+| POST | `/api/ai/summary` | 生成结构化 AI 摘要 |
+| POST | `/api/ai/chapters` | 生成章节·时间轴 |
+| POST | `/api/ai/mindmap` | 生成思维导图 |
+| POST | `/api/ai/ask` | SSE 流式问答（气泡聊天） |
 
 ---
 
 ## 注意事项 / 已知坑
 
-1. **单进程运行**：任务在内存中，多 worker 会各自为政。横向扩展需把 job store 换成 Redis（见 ROADMAP v2）。
+1. **单进程运行**：任务在内存中，多 worker 会各自为政。横向扩展需把 job store 换成 Redis（见 [PLAN.md](docs/PLAN.md) 的 v2 池）。
 2. **平台反爬/登录/地区版权**：抖音走**服务端无头浏览器**（Playwright 复用系统 Chrome，匿名游客会话，无需用户 Cookie / 免浏览器插件），见 `.env` 的 `DOUYIN_*`；X、Instagram、TikTok 多数需 cookies/JS 签名，仍易失败；YouTube 部分需登录/有限制。失败会返回友好中文错误而非崩溃。运营者可用 `COOKIES_FILE` 自测。
+   **B 站部分视频的字幕需登录态才下发**（`need_login_subtitle=True`，例如 `BV1pGdsB2Ebq`、`BV1mAAmzqEfP`）。未配 `COOKIES_FILE`（B 站登录 cookie）时，此类视频会返回**带引导语**的 `no_subtitles`（如实告知「确有字幕但需登录态，请配置 COOKIES_FILE」）——项目不会把 B 站**弹幕（danmaku）XML**当作字幕。配置 B 站登录 cookie 后可正常取字稿并生成摘要。
 3. **ffmpeg 缺失**：影响合并高清档与 m3u8 下载；解析阶段会标 `needs_merge`，无 ffmpeg 时前端显示并降级单文件档。
 4. **更新 yt-dlp**：平台改版频繁，持续可用需定时升级并跑回归：
 

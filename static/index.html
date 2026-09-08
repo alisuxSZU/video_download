@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>闪电下载 · 全网视频一键存到本地</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>" />
   <meta name="description" content="一条链接，下遍全网。批量解析、超清画质、字幕翻译、AI 摘要，随时随地浏览器/手机都能下载视频。" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -99,7 +100,7 @@
           <h4 class="text-sm font-semibold text-slate-600">选择清晰度与格式</h4>
           <button id="addToBatch" class="text-sm text-brand hover:text-brand-dark font-medium">+ 加入批量</button>
         </div>
-        <div id="formatList" class="space-y-2"></div>
+        <div id="formatList" class="grid gap-2 [grid-template-columns:repeat(auto-fill,minmax(220px,1fr))]"></div>
         <div class="mt-4 flex gap-3">
           <button id="downloadBtn" class="flex-1 rounded-xl bg-brand text-white font-bold py-3 text-sm hover:bg-brand-dark transition shadow-sm">⬇️ 下载</button>
           <button id="copyLink" class="rounded-xl border border-slate-200 text-slate-600 px-4 py-3 text-sm hover:bg-slate-50 transition">复制链接</button>
@@ -117,7 +118,97 @@
         </div>
         <div class="flex items-center justify-between text-xs text-slate-400 mt-1">
           <span id="progSpeed"></span>
-          <a id="progDownload" href="#" class="hidden text-brand font-bold">下载文件</a>
+        </div>
+      </div>
+
+      <!-- ======= AI 功能框：视频解析成功后出现，位于同一解析卡片内，六个功能共用当前视频 ======= -->
+      <div id="analyze" hidden class="mt-6 border-t border-slate-100 pt-5">
+        <div class="flex items-center justify-between gap-2 mb-1">
+          <span id="anTitle" class="text-xs text-slate-400 font-mono truncate max-w-full">未解析视频</span>
+        </div>
+        <p class="text-xs text-slate-400 mb-3">以下六个功能针对当前已解析视频；结果在本页按链接缓存，未换链接或未刷新前保持不变，需重新生成请点各结果的「⟳ 重新生成」。</p>
+
+        <div class="mt-4 grid grid-cols-2 sm:grid-cols-3 gap-2">
+          <button id="subBtn" class="an-btn">🎬 提取字幕</button>
+          <button id="subTranslate" class="an-btn">🌐 翻译成中文</button>
+          <button id="sumBtn" class="an-btn">📝 生成摘要</button>
+          <button id="chaptersBtn" class="an-btn">📑 章节时间轴</button>
+          <button id="mindmapBtn" class="an-btn">🧠 思维导图</button>
+          <button id="askOpenBtn" class="an-btn">💬 问答</button>
+        </div>
+
+        <div id="anError" class="hidden mt-3 rounded-lg bg-rose-50 p-3 text-sm text-rose-600"></div>
+        <div id="anLoading" class="hidden mt-3 text-sm text-slate-400">正在处理，长视频耗时较久，请稍候…</div>
+
+        <!-- 字幕 -->
+        <div id="panelSub" class="an-panel hidden mt-4">
+          <div class="flex items-center justify-between mb-2">
+            <span id="subMeta" class="text-xs text-slate-400"></span>
+            <div class="flex gap-2 items-center">
+              <a id="subDl" href="#" class="text-xs text-brand font-semibold hidden">下载 SRT / TXT</a>
+              <button id="subRefresh" class="text-xs text-slate-400 hover:text-brand">⟳ 重新生成</button>
+            </div>
+          </div>
+          <pre id="subText" class="max-h-48 overflow-auto rounded-lg bg-slate-50 p-3 text-xs text-slate-600 whitespace-pre-wrap"></pre>
+        </div>
+
+        <!-- 摘要 -->
+        <div id="panelSum" class="an-panel hidden mt-4">
+          <div class="rounded-lg bg-brand-soft p-3 text-sm text-slate-700 leading-relaxed">
+            <div id="sumTheme" class="text-base font-bold text-slate-900"></div>
+            <div id="sumOverview" class="mt-2 text-slate-600"></div>
+            <div id="sumPoints" class="mt-2 space-y-1 text-slate-600"></div>
+            <div id="sumKeywords" class="mt-3"></div>
+          </div>
+          <div class="flex gap-3 mt-3 items-center">
+            <button id="sumCopy" class="text-xs text-brand font-semibold hover:underline">复制</button>
+            <button id="sumDownload" class="text-xs text-brand font-semibold hover:underline">下载 .md</button>
+            <button id="sumRefresh" class="text-xs text-slate-400 hover:text-brand">⟳ 重新生成</button>
+          </div>
+        </div>
+
+        <!-- 章节·时间轴 -->
+        <div id="panelChap" class="an-panel hidden mt-4">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-xs text-slate-400">时间轴按章节轮廓切分</span>
+            <button id="chaptersRefresh" class="text-xs text-slate-400 hover:text-brand">⟳ 重新生成</button>
+          </div>
+          <div id="sumChapters" class="space-y-2"></div>
+        </div>
+
+        <!-- 思维导图（拖拽平移 / 滚轮缩放 / 点击折叠展开） -->
+        <div id="panelMind" class="an-panel hidden mt-4">
+          <div class="rounded-lg bg-white border border-slate-200 overflow-hidden">
+            <div class="flex flex-wrap items-center gap-2 px-3 py-2 border-b border-slate-100 text-xs text-slate-500">
+              <span class="text-slate-400">拖拽平移 · 滚轮缩放 · 点击节点折叠/展开</span>
+              <div class="ml-auto flex gap-1 items-center">
+                <button id="mmZoomIn" class="px-2 py-1 rounded border border-slate-200 hover:bg-slate-50">＋</button>
+                <button id="mmZoomOut" class="px-2 py-1 rounded border border-slate-200 hover:bg-slate-50">−</button>
+                <button id="mmReset" class="px-2 py-1 rounded border border-slate-200 hover:bg-slate-50">重置视图</button>
+                <button id="mmExpandAll" class="px-2 py-1 rounded border border-slate-200 hover:bg-slate-50">全部展开</button>
+                <button id="mmCollapseAll" class="px-2 py-1 rounded border border-slate-200 hover:bg-slate-50">全部折叠</button>
+                <button id="mindRefresh" class="px-2 py-1 rounded border border-slate-200 text-brand hover:bg-brand-soft">⟳ 重新生成</button>
+              </div>
+            </div>
+            <div id="mindContainer" class="relative w-full overflow-hidden" style="height:60vh; cursor:grab;">
+              <span class="text-sm text-slate-400">正在生成导图…</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 问答（简洁小型对话模块） -->
+        <div id="panelAsk" class="an-panel hidden mt-4">
+          <div class="rounded-lg bg-white border border-slate-200">
+            <div class="flex items-center justify-between px-3 py-2 border-b border-slate-100">
+              <span class="text-xs text-slate-400">对当前视频提问</span>
+              <button id="askClear" class="text-xs text-slate-400 hover:text-brand">清空</button>
+            </div>
+            <div id="askOutput" class="flex flex-col gap-2.5 px-3 py-2 text-sm max-h-52 overflow-auto"></div>
+            <div class="flex gap-2 p-2 border-t border-slate-100">
+              <input id="askInput" type="text" placeholder="就视频内容提问，如：核心观点是什么？" class="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand/60" />
+              <button id="askBtn" class="rounded-lg bg-slate-900 text-white font-semibold px-4 text-sm hover:bg-slate-800 transition">发送</button>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -187,40 +278,6 @@
         <h3 class="font-bold text-slate-900">隐私安全</h3>
         <p class="text-sm text-slate-500 mt-1">服务器不留存，文件到期自动清理</p>
         <span class="chip chip-sky mt-3">到期删除</span>
-      </div>
-    </div>
-  </section>
-
-  <!-- ======= 字幕 + AI 摘要 ======= -->
-  <section class="max-w-3xl mx-auto px-4 py-6">
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-      <div class="rounded-2xl bg-white border border-slate-200 shadow p-6">
-        <h3 class="font-bold text-slate-900 mb-3">🌐 字幕提取 & 翻译</h3>
-        <input id="subUrl" type="url" placeholder="粘贴视频链接（纯文本）" class="w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-brand/60" />
-        <div class="flex gap-2 mt-3">
-          <button id="subBtn" class="flex-1 rounded-lg bg-slate-900 text-white font-semibold py-2.5 text-sm hover:bg-slate-800 transition">提取</button>
-          <button id="subTranslate" class="flex-1 rounded-lg bg-brand text-white font-semibold py-2.5 text-sm hover:bg-brand-dark transition">翻译成中文</button>
-        </div>
-        <div id="subResult" class="mt-4 hidden">
-          <div class="flex items-center justify-between mb-2">
-            <span id="subMeta" class="text-xs text-slate-400"></span>
-            <div class="flex gap-2">
-              <a id="subDl" href="#" class="text-xs text-brand font-semibold">下载 SRT</a>
-            </div>
-          </div>
-          <pre id="subText" class="max-h-48 overflow-auto rounded-lg bg-slate-50 p-3 text-xs text-slate-600 whitespace-pre-wrap"></pre>
-        </div>
-      </div>
-
-      <div class="rounded-2xl bg-white border border-slate-200 shadow p-6">
-        <h3 class="font-bold text-slate-900 mb-1">🤖 AI 视频摘要 <span class="chip chip-rose ml-1">PRO</span></h3>
-        <p class="text-xs text-slate-400 mb-3">用字幕一键生成要点与关键词</p>
-        <input id="sumUrl" type="url" placeholder="粘贴视频链接（纯文本）" class="w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-brand/60" />
-        <button id="sumBtn" class="w-full mt-3 rounded-lg bg-gradient-to-r from-brand to-[#4f9bff] text-white font-semibold py-2.5 text-sm hover:opacity-95 transition">👑 生成摘要</button>
-        <div id="sumResult" class="mt-4 hidden">
-          <div class="rounded-lg bg-brand-soft p-3 text-sm text-slate-700 whitespace-pre-wrap leading-relaxed" id="sumText"></div>
-          <button id="sumCopy" class="mt-2 text-xs text-brand font-semibold">复制摘要</button>
-        </div>
       </div>
     </div>
   </section>
@@ -331,5 +388,11 @@
   <div id="toast" class="hidden fixed bottom-6 left-1/2 -translate-x-1/2 z-50 rounded-full bg-slate-900 text-white text-sm font-medium px-5 py-3 shadow-lg"></div>
 
   <script src="/static/app.js"></script>
+  <script type="module">
+    // Mermaid v11：mindmap 无需单独注册外部图（9.4 起内置）。延迟加载，仅思维导图面板用。
+    import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+    mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: "base", mindmap: { padding: 12 } });
+    window.__mermaid = mermaid;
+  </script>
 </body>
 </html>

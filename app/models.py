@@ -44,6 +44,23 @@ class SummaryRequest(BaseModel):
     url: str
 
 
+class ChaptersRequest(BaseModel):
+    """独立「章节·时间轴」请求（单独调用 LLM，与摘要解耦）。"""
+    url: str
+
+
+class MindmapRequest(BaseModel):
+    """独立「思维导图」请求（单独调用 LLM，与摘要解耦）。"""
+    url: str
+
+
+class AskRequest(BaseModel):
+    """AI 问答（对视频内容追问）。history 为 [{role, content}, ...]（前端维护）。"""
+    url: str
+    question: str
+    history: list[dict[str, str]] | None = None
+
+
 # ---------- Job ----------
 class JobStatus:
     QUEUED = "queued"

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shutil
 import time
 from pathlib import Path
@@ -24,6 +25,61 @@ def _is_douyin(url: str) -> bool:
     from . import douyin
 
     return douyin.is_douyin_url(url)
+
+
+def _is_bilibili(url: str) -> bool:
+    """是否 B 站系链接（字幕需登录态时才下发）。"""
+    lower = url.lower()
+    return "bilibili.com" in lower or "b23.tv" in lower
+
+
+# B 站「有字幕但需登录态才下发」的引导语。加在「该视频暂无可用字幕」之后，让用户知道真相与出路。
+_BILI_SUBTITLE_LOGIN_HINT = (
+    "（B 站该视频确实带字幕，但字幕需登录态才下发；"
+    "请按 .env 的 COOKIES_FILE 填入 B 站登录 cookie（Netscape 格式，宜含 SESSDATA）后重试）"
+)
+
+
+def bilibili_subtitle_login_hint(url: str) -> str:
+    """B 站视频若「有字幕但需登录态才下发(need_login_subtitle)」，返回引导语；否则 ''。
+
+    仅在取字幕失败、疑似无字幕时调用（多 1~2 次轻量 API 查询，可接受）。
+    用于把「该视频暂无可用字幕」升级为准确、可操作的消息：避免用户误以为真无字幕，
+    也避免把 B 站登录态的缺席归因成项目 bug。
+    对「真无字幕」(need_login_subtitle=False, subs_count=0) 或非 B 站返回空，不误报。
+    """
+    if not _is_bilibili(url):
+        return ""
+    try:
+        m = re.search(r"(BV[0-9A-Za-z]+)", url)
+        if not m:
+            return ""
+        bvid = m.group(1)
+        headers = {"User-Agent": settings.user_agent, "Referer": "https://www.bilibili.com/"}
+        view = httpx.get(
+            "https://api.bilibili.com/x/web-interface/view",
+            params={"bvid": bvid},
+            headers=headers,
+            timeout=12,
+        )
+        view.raise_for_status()
+        vd = view.json().get("data") or {}
+        aid, cid = vd.get("aid"), vd.get("cid")
+        if not aid or not cid:
+            return ""
+        player = httpx.get(
+            "https://api.bilibili.com/x/player/wbi/v2",
+            params={"bvid": bvid, "cid": cid, "aid": aid},
+            headers=headers,
+            timeout=12,
+        )
+        player.raise_for_status()
+        pd = player.json().get("data") or {}
+        if pd.get("need_login_subtitle"):
+            return _BILI_SUBTITLE_LOGIN_HINT
+        return ""
+    except Exception:
+        return ""
 
 
 class DownloadCancelled(Exception):
@@ -102,6 +158,13 @@ def _is_video_only(f: dict) -> bool:
 def _is_progressive(f: dict) -> bool:
     """单文件(无需合并)。平台不返回 codec 信息(如 Archive.org)时视为单文件。"""
     return not _is_video_only(f) and not _is_audio_only(f)
+
+
+def _is_storyboard(f: dict) -> bool:
+    """是否非视频「伪格式」（如 yt-dlp 的 sb0/sb1 故事板缩略图，ext=mhtml）。"""
+    ext = str(f.get("ext") or "").lower()
+    proto = str(f.get("protocol") or "").lower()
+    return ext == "mhtml" or proto == "mhtml"
 
 
 def _height(f: dict) -> int:
@@ -205,6 +268,8 @@ def _clean_formats(raw: list[dict]) -> list[dict]:
     """过滤/去重/排序格式列表，标注 needs_merge；单文件渐进档优先展示。"""
     cleaned: dict[tuple, dict] = {}
     for f in raw:
+        if _is_storyboard(f):
+            continue  # 剔除 yt-dlp 的 mhtml 故事板(sb*)伪格式，只留真实可下视频
         if _is_audio_only(f):
             continue  # 不单独展示音频流，避免噪杂
         if not _height(f) and not f.get("resolution"):
@@ -254,16 +319,30 @@ def _clean_formats(raw: list[dict]) -> list[dict]:
 def _subtitles_list(info: dict) -> list[dict]:
     subs: dict[str, dict] = {}
     for lang, arr in (info.get("subtitles") or {}).items():
+        arr = arr or []
+        # 排除 B 站弹幕 danmaku（及纯 xml 弹幕源）：它是评论，不是可读字幕稿
+        if lang.strip().lower() in ("danmaku", "弹幕") or _is_xml_only(arr):
+            continue
         if arr:
             subs.setdefault(lang, {"lang": lang, "is_auto": False, "source": "manual"})
     for lang, arr in (info.get("automatic_captions") or {}).items():
-        if arr and lang not in subs:
+        arr = arr or []
+        if lang.strip().lower() in ("danmaku", "弹幕") or _is_xml_only(arr) or lang in subs:
+            continue
+        if arr:
             subs.setdefault(lang, {"lang": lang, "is_auto": True, "source": "auto"})
     return list(subs.values())
 
 
-# 回退字幕时的语言优先级（中文/英文）
-_LANG_PRIORITY = ("zh-Hans", "zh-CN", "zh", "en")
+def _is_xml_only(arr: list) -> bool:
+    """判断字幕条目是否仅含 xml（弹幕源）。"""
+    exts = {str((e.get("ext") or "")).lower() for e in arr if isinstance(e, dict)}
+    return bool(exts) and exts == {"xml"}
+
+
+# 回退字幕时的语言优先级（中文/英文）。缺 zh-Hant / ai-zh 会让「简体+英文」之外的
+# 中文视频（繁体字幕、YouTube 自动中文 ai-zh）在回退时误选英文。
+_LANG_PRIORITY = ("zh-Hans", "zh-CN", "zh-Hant", "zh", "ai-zh", "en")
 
 
 def _pick_subtitle(available: list[dict], preferred_lang: str | None, is_auto: bool) -> dict | None:
@@ -505,7 +584,13 @@ def extract_subtitle(url: str, lang: str, is_auto: bool, out_dir: Path) -> dict:
         files = list(out_dir.glob("*"))
         if not files:
             return None
-        target = max(files, key=lambda p: p.stat().st_size)
+        # 排除弹幕 xml（B 站会恒产出体积很大的 danmaku.xml，非字幕稿，会盖掉真字幕）。
+        # 只剩 xml 时视为无字幕（避免把弹幕当字幕喂给 LLM/前端）。
+        candidates = [p for p in files if p.suffix.lower() != ".xml"]
+        if candidates:
+            target = max(candidates, key=lambda p: p.stat().st_size)
+        else:
+            return None
         ext = target.suffix.lstrip(".").lower()
         content = target.read_text(encoding="utf-8", errors="replace")
         return {
@@ -542,8 +627,8 @@ def extract_subtitle(url: str, lang: str, is_auto: bool, out_dir: Path) -> dict:
             logger.warning("字幕回退候选 %s(auto=%s) 失败: %s", cand["lang"], cand["is_auto"], exc)
             continue
     if last is not None:
-        raise last
-    raise _SubtitleError("该视频暂无可用字幕")
+        raise _SubtitleError(str(last) + bilibili_subtitle_login_hint(url))
+    raise _SubtitleError("该视频暂无可用字幕" + bilibili_subtitle_login_hint(url))
 
 
 def _ordered_sub_candidates(avail: list[dict], lang: str | None, is_auto: bool) -> list[dict]:
@@ -625,3 +710,55 @@ def subtitle_to_text(content: str, fmt: str) -> str:
         out.append(ln)
     text = "\n".join(out)
     return text.strip()
+
+
+def _parse_timestamp(ts: str) -> float:
+    """把 SRT/VTT 时间戳 'HH:MM:SS,mmm' / 'HH:MM:SS.mmm' / 'MM:SS' 转成秒(float)。"""
+    ts = ts.strip().replace(",", ".")
+    parts = ts.split(":")
+    try:
+        if len(parts) == 3:
+            h, m, s = parts
+            return float(h) * 3600 + float(m) * 60 + float(s)
+        if len(parts) == 2:
+            m, s = parts
+            return float(m) * 60 + float(s)
+    except ValueError:
+        return 0.0
+    return 0.0
+
+
+def subtitle_to_segments(content: str, fmt: str) -> list[dict]:
+    """把 srt/vtt 字幕解析为带时间戳的分段 [{start, end, text}]。
+
+    与 ``subtitle_to_text`` 不同：它**保留时间轴**（start/end 为秒），供「章节 + 时间戳」
+    类摘要使用。已有字幕但分段为空时返回 []，由调用方决定报错或兜底。
+    """
+    if fmt == "vtt":
+        content = content.split("WEBVTT", 1)[-1]
+    if not content or not content.strip():
+        return []
+
+    # 每条字幕以空行分隔的一个块为单位
+    blocks = [b.strip() for b in re.split(r"\n\s*\n", content) if b.strip()]
+    segments: list[dict] = []
+    for block in blocks:
+        lines = [ln.strip() for ln in block.splitlines()]
+        timing_idx = next((i for i, ln in enumerate(lines) if "-->" in ln), None)
+        if timing_idx is None:
+            continue
+        start_s, _, end_s = lines[timing_idx].partition("-->")
+        start, end = _parse_timestamp(start_s), _parse_timestamp(end_s)
+        body = []
+        for ln in lines[timing_idx + 1:]:
+            ln = ln.strip()
+            if not ln or ln.isdigit():
+                continue
+            if "://" in ln and ln.lower().startswith(("http", "www.")):
+                continue
+            body.append(ln)
+        text_body = "\n".join(body).strip()
+        if not text_body:
+            continue
+        segments.append({"start": start, "end": end, "text": text_body})
+    return segments

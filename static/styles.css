@@ -58,3 +58,64 @@
 
 /* 自定义 details 标记 */
 details summary::-webkit-details-marker { display:none; }
+
+/* AI 摘要：多面板 tabs */
+.sum-tab {
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 9999px;
+  color: #64748b;
+  background: #f1f5f9;
+  transition: background .15s ease, color .15s ease;
+}
+.sum-tab:hover { color: #1777ff; background: #eaf2ff; }
+.sum-tab.tab-active { color: #fff; background: #1777ff; }
+
+/* 思维导图树 */
+.mind-root {
+  font-weight: 700;
+  color: #0f172a;
+  background: #eaf2ff;
+  border: 1px solid #c7dbff;
+  border-radius: 8px;
+  padding: 6px 10px;
+  display: inline-block;
+}
+.mind-branch {
+  margin: 6px 0 6px 18px;
+  border-left: 2px solid #dbe4f0;
+  padding-left: 12px;
+}
+.mind-node { color: #334155; }
+.mind-leaf { color: #64748b; font-size: 13px; }
+.mind-leaf::before { content: "• "; color: #94a3b8; }
+
+/* AI 问答闪烁光标 */
+.blink { position: relative; }
+.blink::after { content: "▍"; color: #1777ff; animation: blink 1s steps(2) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+
+/* 统一分析模块：功能按钮 */
+.an-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 10px 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #334155;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  transition: border-color .15s ease, background .15s ease, color .15s ease, transform .15s ease;
+}
+.an-btn:hover { color: #1777ff; border-color: #1777ff; background: #eaf2ff; }
+.an-btn:active { transform: translateY(1px); }
+.an-btn:disabled { opacity: .5; cursor: not-allowed; }
+
+/* 思维导图（Mermaid）容器 */
+#mindContainer svg { max-width: none; }
+#mindContainer .mind-node, #mindContainer .mind-root-list { color: #334155; }
+#mindContainer .mind-branch { margin-left: 8px; border-left: 2px solid #e2e8f0; padding-left: 10px; list-style: none; }

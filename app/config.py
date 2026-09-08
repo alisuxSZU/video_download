@@ -10,7 +10,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-# 项目根目录 = 本文件上一级(即 d:\LCP_agent\ai-ppt-generator)
+# 项目根目录 = 本文件上一级(即 d:\LCP_agent\video_download)
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 # 优先加载项目根下的 .env
@@ -41,7 +41,7 @@ def _float(v: str | None, default: float) -> float:
 class Settings:
     host: str = os.getenv("HOST", "0.0.0.0")
     port: int = _int(os.getenv("PORT"), 8000)
-    version: str = "0.1.0"
+    version: str = "0.2.0"
 
     # ---- 下载 / 临时文件 ----
     # 尽量用短路径，规避 Windows 260 长度限制
@@ -79,6 +79,19 @@ class Settings:
     openai_model: str = os.getenv("OPENAI_MODEL", "deepseek-chat")
     ai_max_chars: int = _int(os.getenv("AI_MAX_CHARS"), 120000)
     ai_timeout_seconds: float = _float(os.getenv("AI_TIMEOUT_SECONDS"), 90)
+    # 结构化摘要（学习型 v2）：单次 vs 分块 map-reduce
+    # 单次直出结构化摘要的上限（字符），超过则走「分块 map-reduce」
+    ai_single_shot_chars: int = _int(os.getenv("AI_SINGLE_SHOT_CHARS"), 30000)
+    # 分块 map-reduce：每章最大字符/预算
+    ai_chapter_max_chars: int = _int(os.getenv("AI_CHAPTER_MAX_CHARS"), 8000)
+    # 分块 map-reduce：最大章节数
+    ai_max_chapters: int = _int(os.getenv("AI_MAX_CHAPTERS"), 20)
+    # 分块 map-reduce：map 阶段并发的 LLM 调用数
+    ai_map_concurrency: int = _int(os.getenv("AI_MAP_CONCURRENCY"), 3)
+    # AI 问答：上下文（相关性章节）最大字符数
+    ai_chat_context_chars: int = _int(os.getenv("AI_CHAT_CONTEXT_CHARS"), 15000)
+    # 字幕稿缓存（AI 问答复用，避免每轮重复提取）TTL 秒
+    transcript_cache_ttl_seconds: int = _int(os.getenv("TRANSCRIPT_CACHE_TTL_SECONDS"), 600)
 
     # ---- 设备无关的 UA，规避平台基础反爬 ----
     user_agent: str = os.getenv(

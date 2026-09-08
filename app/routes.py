@@ -5,19 +5,25 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import mimetypes
 import shutil
+import threading
+import time
 import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 
 from . import ai, downloader, tasks
 from .config import settings
 from .models import (
+    AskRequest,
     BatchRequest,
+    ChaptersRequest,
     DownloadRequest,
+    MindmapRequest,
     ParseRequest,
     SubtitleRequest,
     SummaryRequest,
@@ -225,7 +231,75 @@ def _extract_subtitle_sync(url: str, lang: str, is_auto: bool, out_dir: Path) ->
     return downloader.extract_subtitle(url, lang, is_auto, out_dir)
 
 
-# ---------------- AI 摘要 ----------------
+# ---------------- AI 摘要 + 问答 ----------------
+# 字幕稿缓存：AI 问答每轮都需字幕，避免重复走 yt-dlp 提取；按 TTL 过期，超上限丢最旧。
+_transcript_cache: dict[str, dict] = {}
+_transcript_lock = threading.Lock()
+
+
+def _cache_get(url: str) -> dict | None:
+    with _transcript_lock:
+        ent = _transcript_cache.get(url)
+        if ent and (time.time() - ent["ts"]) < settings.transcript_cache_ttl_seconds:
+            return ent
+        return None
+
+
+def _cache_set(url: str, ent: dict) -> None:
+    with _transcript_lock:
+        _transcript_cache[url] = ent
+        if len(_transcript_cache) > 100:
+            oldest = min(_transcript_cache, key=lambda k: _transcript_cache[k]["ts"])
+            _transcript_cache.pop(oldest, None)
+
+
+def _collect_segments_sync(url: str) -> tuple[list[dict], dict]:
+    """提取带时间戳的字幕分段（优先手动字幕，其次自动）并缓存。
+
+    返回 (segments, meta)。segments 为 [{start, end, text}, ...]（保留时间轴，
+    供章节/思维导图/问答使用）；meta 附带 lang / is_auto / model / used_source。
+    """
+    cached = _cache_get(url)
+    if cached:
+        return cached["segments"], cached["meta"]
+
+    out_dir = Path(settings.temp_dir) / "sub" / uuid.uuid4().hex
+    try:
+        payload = _probe_blocking(url)
+
+        # 多数平台在解析期就对 probe 暴露字幕清单，走「优先手动」的常规路径。
+        subs = payload.get("subtitles") or []
+        if subs:
+            chosen = downloader._pick_subtitle(subs, None, False) or subs[0]
+            result = downloader.extract_subtitle(url, chosen["lang"], chosen["is_auto"], out_dir)
+        else:
+            # B 站等平台解析期不暴露字幕（字幕仅在写字幕时出现），probe 会误判「无字幕」。
+            # 此时改走与 /api/subtitles 相同的「写字幕」路径：手动桶 + 不限语言
+            # （extract_subtitle 内部逐条回退），保证「有真字幕就拿到」。仅弹幕(xml)时
+            # extract_subtitle 会因 _finalize 排除 xml 而返回无字幕，诚实降级。
+            result = downloader.extract_subtitle(url, "", False, out_dir)
+
+        segments = downloader.subtitle_to_segments(result["content"], result["format"])
+        if not segments:
+            # 拿到了“字幕”却解析不出任何带时间戳分段（如 B 站仅弹幕 xml、或空字稿）。
+            # 此前此处会把空列表写进缓存并让 ai.summarize 走到 `没有可用的字幕文本`
+            # 的 LLMError —— 前端收到的是 `llm` 错误码，既误报又污染/缓存空结果。
+            # 视为「无可用字幕」，走真正的 no_subtitles。
+            raise downloader._SubtitleError(
+                "该视频暂无可用于摘要的字幕" + downloader.bilibili_subtitle_login_hint(url)
+            )
+        meta = {
+            "lang": result.get("lang") or None,
+            "is_auto": result["source"] == "auto",
+            "model": settings.openai_model,
+            "used_source": result["source"],
+        }
+        _cache_set(url, {"segments": segments, "meta": meta, "ts": time.time()})
+        return segments, meta
+    finally:
+        shutil.rmtree(out_dir, ignore_errors=True)
+
+
 @router.post("/ai/summary")
 async def summary(req: SummaryRequest, request: Request):
     await _rate(request, "ai", settings.ai_rate_per_min)
@@ -234,13 +308,11 @@ async def summary(req: SummaryRequest, request: Request):
     except Exception as exc:
         return JSONResponse(status_code=exc.status, content={"ok": False, **friendly_error(exc)})
 
-    out_dir = Path(settings.temp_dir) / "sub" / uuid.uuid4().hex
     try:
-        text = await asyncio.get_running_loop().run_in_executor(
-            None,
-            lambda: _collect_transcript_sync(url, out_dir),
+        segments, meta = await asyncio.get_running_loop().run_in_executor(
+            None, lambda: _collect_segments_sync(url)
         )
-        result = await ai.summarize(text)
+        result = await ai.summarize(segments, meta)
         return {"ok": True, **result}
     except downloader._SubtitleError as exc:
         return JSONResponse(status_code=502, content={"ok": False, "error": str(exc), "code": "no_subtitles"})
@@ -248,10 +320,89 @@ async def summary(req: SummaryRequest, request: Request):
         return JSONResponse(status_code=502, content={"ok": False, "error": str(exc), "code": "llm"})
     except Exception as exc:
         return JSONResponse(status_code=500, content={"ok": False, **friendly_error(exc, req.url)})
-    finally:
-        shutil.rmtree(out_dir, ignore_errors=True)
 
 
+@router.post("/ai/chapters")
+async def chapters(req: ChaptersRequest, request: Request):
+    """独立生成「章节·时间轴」（单独调用 LLM，不复用摘要）。"""
+    await _rate(request, "ai", settings.ai_rate_per_min)
+    try:
+        url = validate_url(req.url)
+    except Exception as exc:
+        return JSONResponse(status_code=exc.status, content={"ok": False, **friendly_error(exc)})
+
+    try:
+        segments, meta = await asyncio.get_running_loop().run_in_executor(
+            None, lambda: _collect_segments_sync(url)
+        )
+        chapters = await ai.generate_chapters(segments, meta)
+        return {"ok": True, "chapters": chapters, **meta}
+    except downloader._SubtitleError as exc:
+        return JSONResponse(status_code=502, content={"ok": False, "error": str(exc), "code": "no_subtitles"})
+    except ai.LLMError as exc:
+        return JSONResponse(status_code=502, content={"ok": False, "error": str(exc), "code": "llm"})
+    except Exception as exc:
+        return JSONResponse(status_code=500, content={"ok": False, **friendly_error(exc, req.url)})
+
+
+@router.post("/ai/mindmap")
+async def mindmap(req: MindmapRequest, request: Request):
+    """独立生成「思维导图」树（单独调用 LLM，不复用摘要）。"""
+    await _rate(request, "ai", settings.ai_rate_per_min)
+    try:
+        url = validate_url(req.url)
+    except Exception as exc:
+        return JSONResponse(status_code=exc.status, content={"ok": False, **friendly_error(exc)})
+
+    try:
+        segments, meta = await asyncio.get_running_loop().run_in_executor(
+            None, lambda: _collect_segments_sync(url)
+        )
+        mm = await ai.mindmap(segments, meta)
+        return {"ok": True, "mindmap": mm, **meta}
+    except downloader._SubtitleError as exc:
+        return JSONResponse(status_code=502, content={"ok": False, "error": str(exc), "code": "no_subtitles"})
+    except ai.LLMError as exc:
+        return JSONResponse(status_code=502, content={"ok": False, "error": str(exc), "code": "llm"})
+    except Exception as exc:
+        return JSONResponse(status_code=500, content={"ok": False, **friendly_error(exc, req.url)})
+
+
+@router.post("/ai/ask")
+async def ask(req: AskRequest, request: Request):
+    """对视频内容追问（SSE 流式）。逐 token 推送答案，前端据此拼接显示。"""
+    await _rate(request, "ai", settings.ai_rate_per_min)
+    try:
+        url = validate_url(req.url)
+    except Exception as exc:
+        return JSONResponse(status_code=exc.status, content={"ok": False, **friendly_error(exc)})
+
+    try:
+        segments, _meta = await asyncio.get_running_loop().run_in_executor(
+            None, lambda: _collect_segments_sync(url)
+        )
+    except downloader._SubtitleError as exc:
+        return JSONResponse(status_code=502, content={"ok": False, "error": str(exc), "code": "no_subtitles"})
+    except Exception as exc:
+        return JSONResponse(status_code=500, content={"ok": False, **friendly_error(exc, req.url)})
+
+    async def event_stream():
+        # 手写 SSE 帧（data: <json>\\n\\n），用原生 StreamingResponse —— 不依赖
+        # fastapi.sse.EventSourceResponse（本版本对其 ServerSentEvent 的 .encode 处理异常）。
+        # 前端用 fetch + ReadableStream 逐帧解析；json.dumps 会把 token 内换行转义，保证单帧单行。
+        try:
+            async for token in ai.generate_answer(segments, req.question, req.history):
+                yield f"data: {json.dumps({'delta': token})}\n\n"
+        except ai.LLMError as exc:
+            # 出错时以 error 帧终止，不补发 done：否则前端会用 done 覆盖「出错」状态，把失败显示成无回答。
+            yield f"data: {json.dumps({'error': str(exc)})}\n\n"
+            return
+        yield f"data: {json.dumps({'done': True})}\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+# 保留 v1 的纯文本收集方式（竞品/回归对比用，当前摘要已升级为分段版，此函数未被调用）。
 def _collect_transcript_sync(url: str, out_dir: Path) -> str:
     """优先手动内建字幕，其次自动字幕；两者皆无抛 _SubtitleError。
 
