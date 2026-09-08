@@ -11,14 +11,21 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
-    tailwind.config = {
-      theme: {
-        extend: {
-          colors: { brand: { DEFAULT: '#1777ff', dark: '#1666e6', soft: '#eaf2ff' } },
-          fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'] },
+    // ⚠️ 防御：Tailwind Play CDN 偶尔比内联脚本晚落地（网络/代理抖动），直接 `tailwind.config=...`
+    // 会抛 ReferenceError 污染页面错误。用 onload 回调注册，CDN 就绪即应用，正常路径行为不变。
+    function __applyTailwindConfig() {
+      if (!window.tailwind) return;
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: { brand: { DEFAULT: '#1777ff', dark: '#1666e6', soft: '#eaf2ff' } },
+            fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'] },
+          },
         },
-      },
-    };
+      };
+    }
+    if (window.tailwind) __applyTailwindConfig();
+    else window.addEventListener('load', __applyTailwindConfig);
   </script>
   <link rel="stylesheet" href="/static/styles.css" />
 </head>
@@ -121,16 +128,15 @@
         </div>
       </div>
 
-      <!-- ======= AI 功能框：视频解析成功后出现，位于同一解析卡片内，六个功能共用当前视频 ======= -->
+      <!-- ======= AI 功能框：视频解析成功后出现，位于同一解析卡片内，五个功能共用当前视频 ======= -->
       <div id="analyze" hidden class="mt-6 border-t border-slate-100 pt-5">
         <div class="flex items-center justify-between gap-2 mb-1">
           <span id="anTitle" class="text-xs text-slate-400 font-mono truncate max-w-full">未解析视频</span>
         </div>
-        <p class="text-xs text-slate-400 mb-3">以下六个功能针对当前已解析视频；结果在本页按链接缓存，未换链接或未刷新前保持不变，需重新生成请点各结果的「⟳ 重新生成」。</p>
+        <p class="text-xs text-slate-400 mb-3">以下五个功能针对当前已解析视频；结果在本页按链接缓存，未换链接或未刷新前保持不变，需重新生成请点各结果的「⟳ 重新生成」。</p>
 
         <div class="mt-4 grid grid-cols-2 sm:grid-cols-3 gap-2">
-          <button id="subBtn" class="an-btn">🎬 提取字幕</button>
-          <button id="subTranslate" class="an-btn">🌐 翻译成中文</button>
+          <button id="subBtn" class="an-btn">🎬 字幕</button>
           <button id="sumBtn" class="an-btn">📝 生成摘要</button>
           <button id="chaptersBtn" class="an-btn">📑 章节时间轴</button>
           <button id="mindmapBtn" class="an-btn">🧠 思维导图</button>
@@ -138,28 +144,42 @@
         </div>
 
         <div id="anError" class="hidden mt-3 rounded-lg bg-rose-50 p-3 text-sm text-rose-600"></div>
-        <div id="anLoading" class="hidden mt-3 text-sm text-slate-400">正在处理，长视频耗时较久，请稍候…</div>
+        <!-- AI 生成中的统一加载条：转圈动画 + 一句短文案（替代原先纯文字，避免与面板内占位重复）
+             。spinner 为 CSS 旋转环；「正在处理，长视频耗时较久，请稍候…」拆成各 startBusy 传入的短文案 -->
+        <div id="anLoading" class="hidden mt-3 flex items-center gap-2 text-sm text-slate-400">
+          <span class="spin" aria-hidden="true"></span><span id="anLoadingText">正在处理…</span>
+        </div>
 
-        <!-- 字幕 -->
+        <!-- 字幕（提取 + 翻译合一） -->
         <div id="panelSub" class="an-panel hidden mt-4">
           <div class="flex items-center justify-between mb-2">
-            <span id="subMeta" class="text-xs text-slate-400"></span>
+            <div class="flex items-baseline gap-2">
+              <span id="subModeLabel" class="text-xs font-semibold text-brand"></span>
+              <span id="subMeta" class="text-xs text-slate-400"></span>
+            </div>
             <div class="flex gap-2 items-center">
-              <a id="subDl" href="#" class="text-xs text-brand font-semibold hidden">下载 SRT / TXT</a>
+              <a id="subDl" href="#" class="text-xs text-brand font-semibold hidden">下载 SRT</a>
               <button id="subRefresh" class="text-xs text-slate-400 hover:text-brand">⟳ 重新生成</button>
             </div>
+          </div>
+          <!-- 翻译控制：选目标语言后点「翻译」即把字幕翻译成该语言（原字幕模式下也可用） -->
+          <div class="flex items-center gap-2 mb-2 text-xs text-slate-400">
+            <span>翻译为：</span>
+            <select id="subLangSel" class="border border-slate-200 rounded px-1.5 py-1 bg-white text-slate-600">
+              <option value="简体中文" selected>简体中文</option>
+              <option value="繁体中文">繁体中文</option>
+              <option value="英文">英文</option>
+              <option value="日语">日语</option>
+              <option value="朝鲜语">朝鲜语</option>
+            </select>
+            <button id="subTranslateBtn" class="text-xs text-brand font-semibold hover:underline">翻译</button>
           </div>
           <pre id="subText" class="max-h-48 overflow-auto rounded-lg bg-slate-50 p-3 text-xs text-slate-600 whitespace-pre-wrap"></pre>
         </div>
 
-        <!-- 摘要 -->
+        <!-- 摘要（v3：Markdown 排版渲染） -->
         <div id="panelSum" class="an-panel hidden mt-4">
-          <div class="rounded-lg bg-brand-soft p-3 text-sm text-slate-700 leading-relaxed">
-            <div id="sumTheme" class="text-base font-bold text-slate-900"></div>
-            <div id="sumOverview" class="mt-2 text-slate-600"></div>
-            <div id="sumPoints" class="mt-2 space-y-1 text-slate-600"></div>
-            <div id="sumKeywords" class="mt-3"></div>
-          </div>
+          <div id="sumMd" class="md rounded-lg bg-brand-soft p-3 text-slate-700 leading-relaxed"></div>
           <div class="flex gap-3 mt-3 items-center">
             <button id="sumCopy" class="text-xs text-brand font-semibold hover:underline">复制</button>
             <button id="sumDownload" class="text-xs text-brand font-semibold hover:underline">下载 .md</button>
@@ -170,8 +190,11 @@
         <!-- 章节·时间轴 -->
         <div id="panelChap" class="an-panel hidden mt-4">
           <div class="flex items-center justify-between mb-2">
-            <span class="text-xs text-slate-400">时间轴按章节轮廓切分</span>
-            <button id="chaptersRefresh" class="text-xs text-slate-400 hover:text-brand">⟳ 重新生成</button>
+            <span class="text-xs text-slate-400">时间轴按约 10 分钟一段切分</span>
+            <div class="flex gap-3 items-center">
+              <button id="chaptersDownload" class="text-xs text-brand font-semibold hover:underline">下载 .md</button>
+              <button id="chaptersRefresh" class="text-xs text-slate-400 hover:text-brand">⟳ 重新生成</button>
+            </div>
           </div>
           <div id="sumChapters" class="space-y-2"></div>
         </div>
@@ -187,6 +210,8 @@
                 <button id="mmReset" class="px-2 py-1 rounded border border-slate-200 hover:bg-slate-50">重置视图</button>
                 <button id="mmExpandAll" class="px-2 py-1 rounded border border-slate-200 hover:bg-slate-50">全部展开</button>
                 <button id="mmCollapseAll" class="px-2 py-1 rounded border border-slate-200 hover:bg-slate-50">全部折叠</button>
+                <button id="mmFullscreen" class="px-2 py-1 rounded border border-slate-200 hover:bg-slate-50">⛶ 全屏</button>
+                <button id="mmDownload" class="px-2 py-1 rounded border border-slate-200 hover:bg-slate-50">⬇ 高清图</button>
                 <button id="mindRefresh" class="px-2 py-1 rounded border border-slate-200 text-brand hover:bg-brand-soft">⟳ 重新生成</button>
               </div>
             </div>
@@ -201,7 +226,10 @@
           <div class="rounded-lg bg-white border border-slate-200">
             <div class="flex items-center justify-between px-3 py-2 border-b border-slate-100">
               <span class="text-xs text-slate-400">对当前视频提问</span>
-              <button id="askClear" class="text-xs text-slate-400 hover:text-brand">清空</button>
+              <div class="flex gap-3 items-center">
+                <button id="askExport" class="text-xs text-slate-400 hover:text-brand">导出对话</button>
+                <button id="askClear" class="text-xs text-slate-400 hover:text-brand">清空</button>
+              </div>
             </div>
             <div id="askOutput" class="flex flex-col gap-2.5 px-3 py-2 text-sm max-h-52 overflow-auto"></div>
             <div class="flex gap-2 p-2 border-t border-slate-100">
@@ -385,8 +413,10 @@
   </div>
 
   <!-- Toast -->
-  <div id="toast" class="hidden fixed bottom-6 left-1/2 -translate-x-1/2 z-50 rounded-full bg-slate-900 text-white text-sm font-medium px-5 py-3 shadow-lg"></div>
+  <div id="toast" class="hidden fixed bottom-6 left-1/2 -translate-x-1/2 z-[130] rounded-full bg-slate-900 text-white text-sm font-medium px-5 py-3 shadow-lg"></div>
 
+  <script src="https://cdn.jsdelivr.net/npm/marked@18/lib/marked.umd.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
   <script src="/static/app.js"></script>
   <script type="module">
     // Mermaid v11：mindmap 无需单独注册外部图（9.4 起内置）。延迟加载，仅思维导图面板用。

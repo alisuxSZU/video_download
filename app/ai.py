@@ -4,9 +4,11 @@
 支持 DeepSeek / Zhipu(智谱) / 星火 / Qwen 等任何 OpenAI 兼容端点。
 
 学习型摘要 v2 要点：字幕先解析为带时间戳的 segments，再
-  - 短视频(≤ AI_SINGLE_SHOT_CHARS) → 单次直出 主题/总览/要点/关键词；
-  - 长视频(超出) → 自动分块成章节，每章独立摘要(map)，再汇总(reduce)，
-    从而形成「章节 + 时间戳」的时间轴，并派生思维导图。
+  - 短视频（时长 < AI_CHAPTER_GOAL_SECONDS(约10分钟) 且 字符 ≤ AI_SINGLE_SHOT_CHARS，
+    `_should_split` 为假）→ 单次直出 主题/总览/要点/关键词（`chapters=[]`）；
+  - 长视频（时长或字符达标，`_should_split` 为真）→ 自动分块成章节，每章独立摘要(map），
+    再汇总(reduce)，从而形成「章节 + 时间戳」的时间轴，并派生思维导图。
+  （⚠️ 仅按字符分档会把「每分钟字数少」的口述访谈误判为短片并合成整片时长的伪章节。）
 """
 from __future__ import annotations
 
@@ -252,10 +254,17 @@ def _segments_lines(segments: list[dict]) -> str:
     return "\n".join(f"[{fmt_time(s['start'])} - {fmt_time(s['end'])}] {s['text']}" for s in segments)
 
 
-def segment_chapters(segments: list[dict], max_chars: int | None = None, max_chapters: int | None = None) -> list[dict]:
+def segment_chapters(
+    segments: list[dict],
+    max_chars: int | None = None,
+    max_chapters: int | None = None,
+    goal_seconds: int | None = None,
+) -> list[dict]:
     """把带时间戳的分段聚合为「章节」[{start, end, text, title?, ...}]。
 
-    按字符预算切块；每章起止时间取该章首尾分段的时间，保证时间轴连续、确定。
+    按「时间目标」切块：某章累计时长 ≥ goal_seconds（默认约 10 分钟）**或**累计字符
+    达 max_chars，先到先切一刀。每章起止时间取该章首尾分段的时间，保证时间轴连续、确定。
+    非时间敏感场景（纯粹为了控制 prompt 体积的上下文裁切）可仍用字符预算。
 
     原实现用 `len(chapters) < max_chapters - 1` 作为切分门槛：一旦章节数到达
     max_chapters-1 就不再切，后续全部并入**末章**，使末章无界——超长视频下某个
@@ -267,6 +276,7 @@ def segment_chapters(segments: list[dict], max_chars: int | None = None, max_cha
         return []
     max_chars = max_chars or settings.ai_chapter_max_chars
     max_chapters = max_chapters or settings.ai_max_chapters
+    goal_seconds = goal_seconds or settings.ai_chapter_goal_seconds
     # 硬上限：软目标 max_chapters 只是章节数倾向，不以此让末章无界。
     hard_max_chapters = max_chapters * 3 + 10
     chapters: list[dict] = []
@@ -275,7 +285,9 @@ def segment_chapters(segments: list[dict], max_chars: int | None = None, max_cha
     cur_texts = [segments[0]["text"]]
     cur_chars = len(segments[0]["text"])
     for seg in segments[1:]:
-        if cur_chars >= max_chars and len(chapters) < hard_max_chapters - 1:
+        hit_goal = (seg["end"] - cur_start) >= goal_seconds
+        hit_chars = cur_chars >= max_chars
+        if (hit_goal or hit_chars) and len(chapters) < hard_max_chapters - 1:
             chapters.append({"start": cur_start, "end": cur_end, "text": "\n".join(cur_texts)})
             cur_start = seg["start"]
             cur_end = seg["end"]
@@ -295,8 +307,13 @@ def segment_chapters(segments: list[dict], max_chars: int | None = None, max_cha
     return chapters
 
 
-def derive_mindmap(theme: str, chapters: list[dict]) -> dict:
-    """从结构化摘要确定性派生思维导图树：根=主题 → 一级=章节 → 二级=章节要点。"""
+def derive_mindmap(theme: str, chapters: list[dict], key_points: list[str] | None = None) -> dict:
+    """从结构化摘要确定性派生思维导图树：根=主题 → 一级=章节 → 二级=章节要点。
+
+    短视频直出无章节时回退为 根 → 顶层要点，避免空导图（仅根无分支）。
+    """
+    if not chapters:
+        return {"title": theme, "children": [{"title": str(p)} for p in _as_list(key_points)]}
     return {
         "title": theme,
         "children": [
@@ -307,13 +324,19 @@ def derive_mindmap(theme: str, chapters: list[dict]) -> dict:
 
 
 def _markdown(d: dict) -> str:
-    """由结构化摘要渲染 Markdown 全文（供复制/下载），确定性、无额外 LLM 调用。"""
-    lines = [f"# {d['theme']}", "", d.get("overview", "") or "", "", "## 章节"]
-    for c in d.get("chapters", []):
-        lines.append(f"### [{fmt_time(c['start'])} - {fmt_time(c['end'])}] {c.get('title', '')}")
-        lines.append(c.get("summary", "") or "")
-        for p in _as_list(c.get("key_points")):
-            lines.append(f"- {p}")
+    """由结构化摘要渲染 Markdown 全文（供复制/下载），确定性、无额外 LLM 调用。
+
+    摘要 = **主题 + 总览 + 要点 + 关键词**，纯叙述，**不内嵌「章节·时间轴」**：
+    时间轴由独立的「章节·时间轴」面板承载。此前把摘要章节渲染成
+    `### [MM:SS - MM:SS] title`，短视频会合成「仅一条覆盖整片时长的伪章节」（title=主题、
+    summary=总览），导致摘要顶部与章节区各出现一遍（主人反馈「内容重复、不应该有时间轴」）。
+    故摘要不再含章节段；顶层 `key_points` 直接摊平列要点。
+    """
+    lines = [f"# {d['theme']}", "", d.get("overview", "") or ""]
+    kps = _as_list(d.get("key_points"))
+    if kps:
+        lines += ["", "## 要点"]
+        lines += [f"- {p}" for p in kps]
     kws = _as_list(d.get("keywords"))
     if kws:
         lines += ["", "## 关键词", " ".join(str(k) for k in kws)]
@@ -417,6 +440,24 @@ def _flatten_key_points(chapters: list[dict]) -> list[str]:
 # =========================================================================
 # 对外：结构化摘要
 # =========================================================================
+def _should_split(segments: list[dict]) -> bool:
+    """时间/字符双判据决定是否分块（map-reduce）。
+
+    此前仅以字符预算 `ai_single_shot_chars` 判断「长/短视频」——但口述访谈/播客这类
+    【每分钟字数少】的内容，整段 60+ 分钟的转录也可能 <30000 字，于是被误判为「短视频」
+    走单次直出，再被合成一条覆盖[整片时长]的伪章节（`[00:00 - 01:02:52] 标题=主题、摘要=总览`），
+    这正是主人反馈的「章节时段莫名其妙 / 前后内容重复」的根因。
+
+    章节粒度本质由【时长】决定（既定目标 ~10 分钟一段），故以时长为主判据、字符作上下文
+    体积兜底：任一触发即分块，避免上述伪章节。
+    """
+    if not segments:
+        return False
+    dur = segments[-1]["end"] - segments[0]["start"]
+    chars = sum(len(s["text"]) for s in segments)
+    return dur >= settings.ai_chapter_goal_seconds or chars >= settings.ai_single_shot_chars
+
+
 async def summarize(segments: list[dict], meta: dict) -> dict:
     """由带时间戳的字幕分段生成结构化摘要。
 
@@ -425,26 +466,14 @@ async def summarize(segments: list[dict], meta: dict) -> dict:
     """
     if not segments:
         raise LLMError("没有可用的字幕文本，无法生成摘要")
-    total_chars = sum(len(s["text"]) for s in segments)
 
-    if total_chars <= settings.ai_single_shot_chars:
-        # 短视频：单次直出，并合成一条覆盖全片时间的章节
+    if not _should_split(segments):
+        # 短视频（时间与字符都短）：单次直出，**不合成伪章节**——只给 主题/总览/要点/关键词，
+        # 修「整片时长[00:00 - 01:02:52] + 标题=主题 + 摘要=总览」的重复伪章节。
         short = await _short_summary(segments)
-        data = {
-            **short,
-            "chapters": [
-                {
-                    "start": segments[0]["start"],
-                    "end": segments[-1]["end"],
-                    "title": short["theme"],
-                    "summary": short["overview"],
-                    "key_points": short["key_points"],
-                    "keywords": short["keywords"],
-                }
-            ],
-        }
+        data = {**short, "chapters": []}
     else:
-        # 长视频：分块 map-reduce
+        # 长视频（时长或字符达阈值）：分块 map-reduce，得到 ~10 分钟一段的真实时间轴
         chapters = segment_chapters(segments)
         mapped = await _map_chapters(chapters)
         reduced = await _reduce([{"start": c["start"], "end": c["end"], **m} for c, m in zip(chapters, mapped)])
@@ -460,7 +489,7 @@ async def summarize(segments: list[dict], meta: dict) -> dict:
             ],
         }
 
-    data["mindmap"] = derive_mindmap(data.get("theme", ""), data.get("chapters", []))
+    data["mindmap"] = derive_mindmap(data.get("theme", ""), data.get("chapters", []), data.get("key_points"))
     data["summary"] = _markdown(data)
     data.update(meta)
     return data
@@ -490,8 +519,7 @@ async def mindmap(segments: list[dict], meta: dict) -> dict:
     """
     if not segments:
         raise LLMError("没有可用的字幕文本，无法生成思维导图")
-    total = sum(len(s["text"]) for s in segments)
-    if total <= settings.ai_single_shot_chars:
+    if not _should_split(segments):
         tree = await _mindmap_shot(segments)
     else:
         blocks = segment_chapters(segments)

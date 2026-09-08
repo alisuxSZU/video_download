@@ -41,7 +41,7 @@ def _float(v: str | None, default: float) -> float:
 class Settings:
     host: str = os.getenv("HOST", "0.0.0.0")
     port: int = _int(os.getenv("PORT"), 8000)
-    version: str = "0.2.0"
+    version: str = "0.3.1"
 
     # ---- 下载 / 临时文件 ----
     # 尽量用短路径，规避 Windows 260 长度限制
@@ -64,7 +64,9 @@ class Settings:
     # ---- 安全 / 限流 ----
     parse_rate_per_min: int = _int(os.getenv("RATE_PARSE_PER_MIN"), 20)
     download_rate_per_min: int = _int(os.getenv("RATE_DOWNLOAD_PER_MIN"), 6)
-    ai_rate_per_min: int = _int(os.getenv("RATE_AI_PER_MIN"), 3)
+    # 每分钟每 IP 可调用 AI 功能（共用「ai」限流桶：字幕提取/翻译、摘要、章节、导图、问答）。
+    # 默认 30：普通用户一次连点多个功能 + 问几个问题（~10 次/分钟）不被打断，仍保留刷量拦截。
+    ai_rate_per_min: int = _int(os.getenv("RATE_AI_PER_MIN"), 30)
     extractor_allowlist: list[str] = field(
         default_factory=lambda: [
             x.strip() for x in os.getenv("EXTRACTOR_ALLOWLIST", "").split(",") if x.strip()
@@ -84,6 +86,8 @@ class Settings:
     ai_single_shot_chars: int = _int(os.getenv("AI_SINGLE_SHOT_CHARS"), 30000)
     # 分块 map-reduce：每章最大字符/预算
     ai_chapter_max_chars: int = _int(os.getenv("AI_CHAPTER_MAX_CHARS"), 8000)
+    # 分块 map-reduce：每章目标时长（秒）——先到先切（达到目标时长或字符预算）
+    ai_chapter_goal_seconds: int = _int(os.getenv("AI_CHAPTER_GOAL_SECONDS"), 600)
     # 分块 map-reduce：最大章节数
     ai_max_chapters: int = _int(os.getenv("AI_MAX_CHAPTERS"), 20)
     # 分块 map-reduce：map 阶段并发的 LLM 调用数

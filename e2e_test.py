@@ -25,7 +25,6 @@ SHOTS.mkdir(parents=True, exist_ok=True)
 
 FEATURE_ENDPOINTS = {
     "subBtn": "/api/subtitles",
-    "subTranslate": "/api/subtitles",
     "sumBtn": "/api/ai/summary",
     "chaptersBtn": "/api/ai/chapters",
     "mindmapBtn": "/api/ai/mindmap",
@@ -41,13 +40,12 @@ def wait_busy_done(page, timeout_ms=90000):
 def panel_ok(page, btn_id):
     """不同面板用各自的成品选择器判断完成。"""
     wait_busy_done(page)
-    if btn_id in ("subBtn", "subTranslate"):
+    if btn_id == "subBtn":
         txt = page.inner_text("#subText").strip()
         return f"字幕长度={len(txt)}"
     if btn_id == "sumBtn":
-        if page.locator("#sumOverview").inner_text().strip():
-            return "摘要:" + page.inner_text("#sumTheme").strip()[:40]
-        return "sumOverview empty"
+        txt = page.inner_text("#sumMd").strip()
+        return f"摘要md长度={len(txt)}"
     if btn_id == "chaptersBtn":
         n = page.locator("#sumChapters > *").count()
         return f"章节条目={n}"
@@ -127,8 +125,15 @@ def run():
         for bad in ("需合并音视频", "单文件"):
             assert bad not in format_txt, f"格式选项仍显示无意义角标「{bad}」"
 
-        # ---- 3. 逐项触发 6 个功能 ----
-        for btn_id in ["subBtn", "subTranslate", "sumBtn", "chaptersBtn", "mindmapBtn", "askOpenBtn"]:
+        # ---- 2d. 新增：翻译目标语言选择（简体/繁体/英文/日语/朝鲜语）+ 各模块下载入口存在 ----
+        langs = page.evaluate("Array.from(document.querySelectorAll('#subLangSel option')).map(o => o.value)")
+        print(f"[check] 翻译目标语言选项 = {langs}")
+        assert langs == ["简体中文", "繁体中文", "英文", "日语", "朝鲜语"], f"翻译语言选项缺失: {langs}"
+        for bid in ["subDl", "chaptersDownload", "askExport", "sumDownload", "mmDownload"]:
+            assert page.locator(f"#{bid}").count() == 1, f"{bid} 按钮缺失"
+
+        # ---- 3. 逐项触发 5 个功能 ----
+        for btn_id in ["subBtn", "sumBtn", "chaptersBtn", "mindmapBtn", "askOpenBtn"]:
             page.click(f"#{btn_id}")
             page.wait_for_timeout(600)
             print(f"[check] {btn_id}: {panel_ok(page, btn_id)}")
@@ -286,7 +291,7 @@ def run():
         page.wait_for_timeout(1500)
         print(f"[check] 切换链接后标题 = {page.inner_text('#dlTitle')!r}（原: {title1!r}）")
         cleared = page.evaluate("""() => ({
-          sum: document.querySelector('#sumOverview').innerText,
+          sum: document.querySelector('#sumMd').innerText,
           sub: document.querySelector('#subText').innerText,
           ask: document.querySelector('#askOutput').innerText,
           mindChildren: document.querySelector('#mindContainer').children.length,

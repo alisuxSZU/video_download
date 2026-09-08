@@ -1,5 +1,98 @@
 # CHANGELOG — 按里程碑记录的实现进度与决策变更
 
+## [0.3.1] — 章节伪章节修复：长时长低字数访谈被误判为「短视频」（2026-09-08）
+
+> 主人反馈（附截图）：摘要卡片里「章节」一节出现 `[00:00 - 01:02:52] 许成钢教授研判…` 显得**莫名其妙**，且**前后内容重复**——章节标题=主题、章节摘要=总览，同一段话在摘要顶部与章节区各出现一次。
+
+### Fixed / 根因
+- **长时长低字数内容被误判为「短视频」**：`summarize`（`app/ai.py`）此前用**字符预算** `ai_single_shot_chars`（30000）判断长短视频。但**口述访谈**这类每分钟字数少的内容，60+ 分钟整段转录也可能 <30000 字 → 被误判为「短视频」走**单次直出**，并合成一条**覆盖整片时长的伪章节** `{start:seg0.start, end:segN.end, title:short["theme"], summary:short["overview"]}` → ① 时段 `[00:00 - 01:02:52]`（整片时长，与预期 ~10 分钟一段不符）；② 标题=主题、摘要=总览 → 前后重复。
+- 章节粒度本质由**时长**决定（既定目标 ~10 分钟一段），字符只是上下文体积的兜底，故旧判据是**错误信号**。
+
+### Fixed / 修复
+- `app/ai.py` 新增 `_should_split(segments)`：`时长 ≥ ai_chapter_goal_seconds(600s) 或 字符 ≥ ai_single_shot_chars` 任一触发即分块（map-reduce），否则单次直出。
+- `summarize`：判据改用 `not _should_split(segments)`；**短视频单次直出不再合成伪章节**（`chapters=[]`），只给 主题/总览/要点/关键词——彻底修掉那一条「整片时长 + 标题=主题 + 摘要=总览」的重复块。
+- `_markdown`：**一律输出纯叙述**（主题+总览+`## 要点`+`## 关键词`），**不内嵌 `## 章节`/时间戳**——时间轴由独立「章节·时间轴」面板承载。无论长短视频都不再出现「`### [MM:SS - MM:SS] title`」块（主人确认：摘要模块不应有时间轴）。
+- `derive_mindmap(theme, chapters, key_points=None)`：无章节时回退为 `根 → 顶层要点`，避免短视频导图只剩一个裸根。
+- `mindmap` 端点：判据同步改 `_should_split`，与 `summarize` 一致（长访谈的导图也按 ~10 分钟分块，与摘要章节数对齐）。
+
+### Verified
+- ✅ 单元（mock 62min 稀疏访谈，300 条、2400 字）：`_should_split=True` → `segment_chapters(goal_seconds=600)` 得到 **7 个 ~10 分钟真实章节**（00:00–09:54 / 10:04–19:58 / 20:07–30:01 …），**不再是单条 `[00:00-01:02:52]`**；真实短视频（180s、4000 字）→ `_should_split=False`、`_markdown` 不含 `## 章节`。
+- ✅ 全链路 `summarize`（桩 LLM）：长路径产出 7 章 + reduce 主题 + 7 分支导图 + 纯叙述 `_markdown`（主题+总览+要点+关键词，**无 `## 章节`/时间戳**）。
+- ✅ `e2e_features.py` mock 回归全绿、无控制台报错。
+
+## [0.3.0] — 各模块下载/导出 + 翻译目标语言选择 + 字幕模块合并为单钮（2026-09-08）
+
+> 目标：① 「提取字幕」「翻译」「章节时间轴」「问答」等模块都能**下载**（摘要 `.md`、导图 PNG 此前已有）；② 「翻译」提供**目标语言选择**（简体中文/繁体中文/英文/日语/朝鲜语）；③ 主人反馈「提取字幕 / 翻译字幕」两个按钮共用同一面板、无标识、用法不清楚 → **合并成单个「🎬 字幕」按钮**（六宫格变五宫格）。**已 mock 后端确定性回归。**（本环境 YouTube 不可达，真实 `e2e_test.py`（解析 `UISJGnJ1LpA`）无法运行；改以「拦截 `/api/*` 的 mock 后端 + 系统 Chrome」的真浏览器回归代替。）
+
+### Fixed / 真 BUG
+- **字幕/翻译下载链接恒不可见**：`#subDl` 的 `<a download>` 在 `index.html` 里恒带 `hidden` class，而 `makeSubDownload` 只设置 `href/download`、从不解 `hidden` → 用户看得到「下载」入口却点不到、下载功能形同虚设。修复：`makeSubDownload` 在写入文件后 `link.classList.remove("hidden")`（**有内容即揭示入口**）；`handleSubtitle` 的 `catch` 里 `$("#subDl").classList.add("hidden")`，让提取失败不残留过期下载。
+
+### Added
+- **`static/index.html`**：字幕模块**合并为单钮**——`🎬 提取字幕` + `🌐 翻译字幕` 两个按钮收敛为单个 `🎬 字幕`（六宫格变五宫格），面板内新增「翻译为：」行 + `<select id="subLangSel">`（5 项：简体中文/繁体中文/英文/日语/朝鲜语，简体选中）+ `<button id="subTranslateBtn">翻译</button>`，并加模式标签 `#subModeLabel`；章节面板工具栏加 `<button id="chaptersDownload">下载 .md</button>`；问答面板头部加 `<button id="askExport">导出对话</button>`。
+- **`static/app.js`**：`downloadChapters()`（由 `lastChapters` 渲染 `# 章节时间轴 / ## [MM:SS - MM:SS] title / summary / - key_points` → Blob `章节时间轴.md`）；`exportChat()`（由 `askHistory` 渲染 `# 视频问答记录 / **我**：… / **AI**：…` → Blob `视频问答记录.md`）；新增状态 `lastChapters`。**合并为单钮**：`subBtn` 恒 `handleSubtitle(false)`（原字幕视图），翻译改由面板内 `subTranslateBtn`（`handleSubtitle(true)`）+ 下拉触发；`renderSubtitleData` 设模式标签 `#subModeLabel`（`原字幕`/`已翻译为：X`），`makeSubDownload` 动态设下载文案 `下载 SRT`/`下载 TXT（X）`。**翻译语言选择**：`handleSubtitle(translate)` 读 `#subLangSel.value` 作 `target_lang`，缓存键逐语言区分（`subTranslate:{target_lang}`，切换语言后「翻译」或「重新生成」即重翻），toast「已翻译成{lang}」，下载文件名 `字幕-{lang}.txt`。
+- **`e2e_features.py`**：新回归脚本（mock 后端 + 系统 Chrome，无需外网）——断言 5 语言选项默认简体、翻译成英文/日语渲染正确、字幕下载文件名含目标语言与译文、切换语言重翻、章节生成+下载、摘要下载、问答 SSE→气泡→导出，全程无控制台报错。
+- **AI 生成中「动图」反馈（主人反馈：章节时间轴生成提示语啰嗦；截图显示 3 行几乎重复的占位句叠加）**：全局 `#anLoading` 由纯文本 `div` 改为「旋转环 `.spin` + 文案 `#anLoadingText`」的 flex 行；四个面板占位（字幕 `#subText`、摘要 `#sumMd`、章节 `#sumChapters`、导图 `#mindContainer`）由冗长句子改为 `skelHTML(rows)` 生成的**骨架屏**（`.skel` 流光条，随行数差宽）。新增 `startBusy(msg)` 写 `#anLoadingText`、`skelHTML(rows)` 辅助函数；`#anLoading` 仍以 `hidden` class 开关，`wait_busy` 等待逻辑不变。CSS 仅追加 `.spin`/`@keyframes spin` 与 `.skel`/`@keyframes skel`（`styles.css` 尾）。**`e2e_features.py` 复跑全绿、无控制台报错**。
+
+### Verified
+- ✅ `e2e_features.py` 全绿（mock 确定性，无 YouTube/DeepSeek 依赖）：语言选项 `["简体中文","繁体中文","英文","日语","朝鲜语"]` 且简体选中；**合并为单钮后的完整链路**——点「🎬 字幕」→ 模式标签 `原字幕`、显示原始 SRT、下载 `字幕.srt`；切「英文」点「翻译」→ 模式标签 `已翻译为：英文`、渲染 `【英文】…`、下载文件名 `字幕-英文.txt` 且内容含译文；再点「🎬 字幕」→ 回到 `原字幕`；切「日语」点「翻译」→ 重翻 `【日语】…`；章节渲染 2 卡片 → 下载 `章节时间轴.md`（含章节标题/要点）；摘要渲染 → 下载 `video-summary.md`；问答 SSE 气泡 → 导出 `视频问答记录.md`（含问题/回答）；**无控制台报错**。
+- ✅ 后端 `ai.translate` 直连 DeepSeek 实测 5 目标语言：繁体中文→繁体、英文→English、日语→日语、朝鲜语→Korean；简体中文→原样返回（样本本身即简体，符合「已是目标语言则原样返回」规则）。
+- ✅ `e2e_test.py` 解析干净（把指向旧 `#sumOverview` 的两处过期断言改为 `#sumMd`，并补 `#subLangSel` 选项与 `#subDl/#chaptersDownload/#askExport/#sumDownload/#mmDownload` 各计数=1 的结构性断言）。
+
+> 说明：本条目为纯前端新增（Blob 下载 + 下拉选择）+ 一处后端配置默认值调整；未触碰下载/解析/字幕提取路径。
+
+### Changed / 配置
+- **`app/config.py`**：`ai_rate_per_min` 默认由 `3` 调高到 `30`（`.env.example` 同步）。原因：5 个 AI 端点（字幕提取/翻译、摘要、章节、导图、问答）**共用一个 `ai` 限流桶**，默认 3/分钟导致普通用户 60 秒内连点 4 个以上功能就 429（本次主人实测「提取字幕→翻译→章节→问答」即触发）。30/分钟照顾正常连点 + 问几个问题（~10 次/分钟），仍保留刷量拦截；如需更严/更宽松可在 `.env` 调 `RATE_AI_PER_MIN`。
+
+## [0.2.9] — AI 体验三处修复：导图「缩成一团」/ 问答「不流式」感知 / 输入框未清空（2026-09-08）
+
+> 目标：主人演示时反馈的三个 AI 体验问题。① 思维导图生成后**缩成一团**，应适应展示框大小；② AI 生成输出**感知不流式**（等了很久才一次性吐出）；③ 问答发送后**输入框仍残留问题**。**三处均真实浏览器端到端回归。**
+
+### Fixed / 根因
+- **①思维导图双倍缩小（真 BUG）**：mermaid 输出的 `<svg>` 自带 `viewBox`（如 `3 3 1592 585`）。旧代码配套 `width/height=100%`，浏览器会**自动**按 viewBox 把整棵树缩进容器（对 1568px 宽的树 ≈ **0.43** 倍），随后 `fitView()` 又按 `getBBox()`（用户单位）对容器像素再算一次 `scale≈0.40` → 有效缩放 ≈ **0.17** → 图被压成一团。
+  - `static/app.js`（`setupMindmapDom`）：把 svg **归一为「1 用户单位 = 1 像素」**——`viewBox` 收敛到内容 bbox（含折叠徽标，留 10px 边距）、宽高设为内容像素尺寸；`fitView` 的 scale 因此保持**单次正确应用**（实测宽树 1616px→容器 684px 时 scale≈0.39，渲染宽 ≈629px ≈ 填满容器 92%），且滚轮缩放/拖拽平移坐标（按像素算）从「近似」变回**精确**。
+  - `static/styles.css`：`#mindContainer` 加 `overflow: hidden`（svg 归一为内容像素尺寸后须在容器内裁掉溢出）。全屏态已继承裁剪，不影响。
+- **②问答 SSE 感知「不流式」**：后端 `_chat_stream` 确为逐 token 流式，但生成前有一段**冷路径**（字幕抽取 + 上下文构建，可能 2s+；无字幕缓存时更长）静默等待，首帧前只有「…」，观感像「等全部生成完才吐」。
+  - `app/routes.py`（`/api/ai/ask`）：把**字幕抽取挪进 `event_stream`**，流一开始即推 `{"status":"preparing"}` 帧，抽取完推 `{"status":"generating"}` 帧，再逐 token 推 `delta` —— 全程无阻塞等待；字幕缺失/LLM 错误改以 `error` 帧终止（HTTP 200）。
+  - `app/routes.py`：`StreamingResponse` 加 `Cache-Control: no-cache` / `X-Accel-Buffering: no` / `Connection: keep-alive`，杜绝 nginx 等反向代理把 SSE **缓冲到收尾一次吐出**。
+  - `static/app.js`（`handleAsk`）：识别 `status` 帧，占位符从「…」实时切换为「正在检索字幕与上下文…」/「正在生成回答…」——用户在首 token 前即看到「流已在动」。
+- **③问答输入框未清空（真 BUG）**：`handleAsk` 读走 `q` 后从未 `#askInput.value=""`。
+  - `static/app.js`（`handleAsk`）：校验 url/`q` 通过后立即清空输入框（问题已入气泡与历史，不再残留）。
+
+### Security / 边界（取舍）
+- `/api/ai/ask` 现在对字幕缺失/LLM 错误返回 **HTTP 200 + `error` 帧**（此前 502）；前端 `handleAsk` 已能识别 `json.error` 帧并把失败显示为「[错误] …」，不补发 `done` 避免覆盖失败态——语义等价，仅把 502 改走流式错误帧。无字幕场景不在 e2e 覆盖内，不影响回归。
+- 状态帧/进度文案不参与 markdown 渲染、不写入 `askHistory`（仅 `delta` 累加）；`askGen`/`askAbort` 竞态守卫与「中流清空」「换链接」加固原样保留。
+
+### Verified（真实浏览器端到端回归）
+- ✅ 确定性探针 + 真实浏览器探针：导图 `svgAttrW` 由 `"100%"` 变 `"1636.24px"`、`viewBox` 为内容 bbox，scale≈0.389，树渲染宽 ≈629px / 容器 684px（旧版 ≈0.17 压团）；问答首 token 前显示「正在生成回答…」，随后逐增量增长（`+61/+83/+74/+73`）；问答发送后 `#askInput` 恒为 `''`。
+- ✅ `e2e_test.py` 全绿（思维导图断言：`__mm.view` 暴露 / 滚轮放大 / 拖拽平移 / 折叠 / 全部展开；解析 / 格式网格 / 字幕 / 摘要 / 章节 / 缓存 / 换链接清空 / 问答中流清空守卫均无回归，**无控制台报错**）。此前一次运行曾出现 1 个 `429` console 报错，排查后确认是**服务器端 `ai` 限流组默认 3/分钟过低**导致（同一 60s 内连点 >3 个 AI 功能触发应用自身限流），**非本次改动回归**；已用 `RATE_AI_PER_MIN=999` 的高限流实例复跑，得到干净 P0 通过。
+
+## [0.2.8] — AI 模块体验三件套：Markdown 渲染 + 思维导图全屏/高清导出 + 章节细化（2026-09-08）
+
+> 目标：解决三个体验缺口。① 上版 AI 输出的 Markdown（`# 标题`/`**加粗**`/列表/代码）都以纯文本 `textContent` 显示（问答尤其明显）、无排版；② 思维导图展示区被 `height:60vh` 卡死，无法全屏、也无法导出图片；③ 章节时间轴按「字符预算」切块（默认 8000 字 ≈ 30 分钟），粒度太粗。**三处均真实浏览器端到端回归。** 用户已确认：章节统一约 **10 分钟**一段、摘要默认改 Markdown、导图改用户**页面内全屏遮罩**并新增「下载高清 PNG」。
+
+### Added
+- **`app/config.py`**：新增 `ai_chapter_goal_seconds`（默认 600 秒 = 10 分钟，`AI_CHAPTER_GOAL_SECONDS` 可调），与字符预算并行作为章节切分判据。
+- **`app/security.py`**：CSP `img-src` 加 `blob:`（否则 `exportMindmapPNG` 的 `new Image()` 从 objectURL 加载会被 CSP 拦截，静默失败）。
+- **`static/index.html`**：插入 `marked@18`（`lib/marked.umd.js`）与 `dompurify@3`（`dist/purify.min.js`）两条 jsdelivr 经典脚本（CSP 已放行 jsdelivr）；`#panelSum` 内结构化卡片改为 `<div id="sumMd" class="md">`；导图工具栏加 `#mmFullscreen` / `#mmDownload` 两按钮；`#toast` z-index 提到 130（压在全屏遮罩 z=120 之上）；章节面板提示改为「约 10 分钟一段切分」。
+- **`static/styles.css`**：新增 `.md`（Markdown 排版：h1-h6 / p / ul·ol / li / 内联 code / pre / blockquote / table / a）与 `#panelMind.mm-fullscreen`（页面内全屏遮罩，`flex:1; height:auto !important` 压过内联 `60vh`、`margin:0` 压过 `mt-4`）。
+
+### Changed
+- **`app/ai.py`（`segment_chapters`）**：新增 `goal_seconds` 参数，切分判据由「纯字符预算」改为「**时间目标 ≥ goal_seconds 或 字符 ≥ max_chars 先到先切**」，默认 600s；签名默认读 `settings.ai_chapter_goal_seconds`，四处调用点免改自动生效。仍在硬上限前始终切分、每章（含末章）`max_chars*2` 兜底截断（不顶爆上下文）；短于 10 分钟视频仍单段。
+- **`static/app.js`（`renderSummary`/`renderAskMarkdown`）**：摘要与问答答案改为 `DOMPurify.sanitize(marked.parse(...))` 渲染；`resetAnalyze`/`handleSummary` 的 `#sumTheme/#sumOverview/#sumPoints/#sumKeywords` 全部改为 `#sumMd`。问答**流式期间仍 `textContent` 增量**（快、无闪烁），流正常结束且未被错误中断时一次性渲染成 Markdown；出错帧保留纯文本。
+- **`static/app.js`（导图）**：新增 `toggleMindFullscreen()`（`#panelMind` 挂 `mm-fullscreen` 遮罩态，复用同一 `#mindContainer`，drag/zoom/fold 零改动保留）与 `exportMindmapPNG()`（原生 SVG serialize→Blob→Image→canvas，**先把 mermaid 的 `<foreignObject>` 标签换成 `<text>`**）——mermaid v11 mindmap 节点标签是 `<foreignObject>`，非浏览器光栅化经 `<img>` 会丢文字（空白）。
+- **`static/app.js`（全屏逃逸 transform 包含块）**：⚠️ 实测发现 `position:fixed` 会被**带 transform 的祖先**（解析结果卡片的 `animate-rise` identity 矩阵 `matrix(1,0,0,1,0,0)`）当作包含块 → 全屏态被困在卡片内（`inset:0` 只铺满卡片大小），而非视口。故 `toggleMindFullscreen` 进入时把 `#panelMind` **搬到 `<body>`**（`mmRestoreParent/mmRestoreNext` 记原位）、退出用 `insertBefore` 还原；JS 引用全是 id、事件在节点上，搬移不破坏交互。
+- **`static/index.html`（Tailwind 配置内联脚本防御）**：CDN Play 脚本偶发比内联 `tailwind.config=...` 晚落地 → 抛 `ReferenceError: tailwind is not defined`。改在 `window.tailwind` 就绪时立即应用（正常路径行为不变），否则注册 `load` 回调再应用。
+
+### Security / 边界（取舍）
+- **必须消毒**：LLM 输出不可信，`marked` 只解析不消毒，故一律先 `window.DOMPurify.sanitize(...)` 再写入 `innerHTML`。
+- **问答错误帧不渲染**：出错（`{"error"}` 帧或中断）时置 `errorOccurred=true` 并**跳过** Markdown 渲染、保留纯文本（含错误注记）——避免把报错也“美化”成正文。
+- **标记转换仅用于导出 clone**：`foreignObject→text` 只在 `svg.cloneNode(true)` 上做，不动 live DOM；导出前去掉 `.mm-fold` 徽标与 `#mmViewport` 的 pan/zoom transform（复原完整树）。
+
+### Verified（真实浏览器端到端回归）
+- ✅ `e2e_test.py` 全绿：六功能（字幕/翻译/摘要/章节/导图/问答）+ 结果缓存 + 换链接清空 + 问答气泡 + 中流清空守卫均无回归；无控制台错误。（摘要成品断言改为读 `#sumMd`。）
+- ✅ `segment_chapters` 单元核验：1 小时素材 → 7 章每章约 570-600s、时间轴连续不重叠；短视频（<10min）仍单章。
+- ✅ 新功能手工验证：摘要面板 `#sumMd` 出现 `<h1>/<h2>/<li>`；问答答案出现 `<strong>/<ul>/<pre>`，注入 `<script>`/`onerror` 被 DOMPurify 剥除（markdown 结构保留）；`#mmFullscreen` 全屏后 `#mindContainer` 撑满（`getBoundingClientRect().height≈955/1000`）、滚轮缩放/拖拽平移仍生效、退出恢复 class + `body.overflow`；`#mmDownload` 产出**非空白** `mindmap.png`（718KB）。
+
 ## [0.2.7] — 格式选项去噪：删「需合并音视频/单文件」角标 + 剔除 MHTML 故事板伪格式（2026-09-08）
 
 > 目标：**清晰度/格式列表只给用户「能从里面挑到真实可下视频」的选项**。删掉没有意义的「需合并音视频/单文件」角标；并把 yt-dlp 返回的 `sb*`（storyboard 缩略图，`ext=mhtml`、`filesize=0`、无真实码流）这类**伪格式**过滤掉 —— 此前它们会以「180p / MHTML」「90p / MHTML」这样的选项混在列表里，用户点下去下载不到真视频（正是用户提问「MHTML 是什么」的来源）。**真实浏览器端到端回归。**

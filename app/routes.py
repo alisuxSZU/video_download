@@ -377,19 +377,26 @@ async def ask(req: AskRequest, request: Request):
     except Exception as exc:
         return JSONResponse(status_code=exc.status, content={"ok": False, **friendly_error(exc)})
 
-    try:
-        segments, _meta = await asyncio.get_running_loop().run_in_executor(
-            None, lambda: _collect_segments_sync(url)
-        )
-    except downloader._SubtitleError as exc:
-        return JSONResponse(status_code=502, content={"ok": False, "error": str(exc), "code": "no_subtitles"})
-    except Exception as exc:
-        return JSONResponse(status_code=500, content={"ok": False, **friendly_error(exc, req.url)})
-
     async def event_stream():
         # 手写 SSE 帧（data: <json>\\n\\n），用原生 StreamingResponse —— 不依赖
         # fastapi.sse.EventSourceResponse（本版本对其 ServerSentEvent 的 .encode 处理异常）。
         # 前端用 fetch + ReadableStream 逐帧解析；json.dumps 会把 token 内换行转义，保证单帧单行。
+        #
+        # 及时性：把「字幕抽取 + 上下文构建」这步（冷路径可能 2s+）也挪进流里，这样请求一进来流就立即可见，
+        # 先推一帧 status 让前端立刻有反应，再在生成阶段推一帧 status，最后逐 token 推 delta —— 全程无阻塞等待。
+        yield f"data: {json.dumps({'status': 'preparing'})}\n\n"
+        try:
+            segments, _meta = await asyncio.get_running_loop().run_in_executor(
+                None, lambda: _collect_segments_sync(url)
+            )
+        except downloader._SubtitleError as exc:
+            # 出错以 error 帧终止（HTTP 200，走流式错误；不补发 done，否则前端用 done 覆盖失败态）
+            yield f"data: {json.dumps({'error': str(exc), 'code': 'no_subtitles'})}\n\n"
+            return
+        except Exception as exc:
+            yield f"data: {json.dumps({'error': friendly_error(exc, req.url)['error']})}\n\n"
+            return
+        yield f"data: {json.dumps({'status': 'generating'})}\n\n"
         try:
             async for token in ai.generate_answer(segments, req.question, req.history):
                 yield f"data: {json.dumps({'delta': token})}\n\n"
@@ -399,7 +406,12 @@ async def ask(req: AskRequest, request: Request):
             return
         yield f"data: {json.dumps({'done': True})}\n\n"
 
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
+    # Cache-Control/X-Accel-Buffering：阻止 nginx 等反向代理把 SSE 缓冲到收尾才一次吐出，确保逐帧流式下发。
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+    )
 
 
 # 保留 v1 的纯文本收集方式（竞品/回归对比用，当前摘要已升级为分段版，此函数未被调用）。

@@ -45,7 +45,7 @@
 - `X-Frame-Options: DENY`
 - `Referrer-Policy: strict-origin-when-cross-origin`
 - `Permissions-Policy: camera=(), microphone=(), geolocation=()`
-- `Content-Security-Policy`（实际，[security.py](app/security.py) `_build_csp`）：`default-src 'self'`；`script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com`；`style-src 'self' 'unsafe-inline'`；`img-src 'self' data: http: https:`；`font-src 'self' https://fonts.gstatic.com`；`connect-src 'self' https:`。
+- `Content-Security-Policy`（实际，[security.py](app/security.py) `SecurityHeadersMiddleware.dispatch` 内联拼装，无 `_build_csp` 函数）：`default-src 'self'`；`script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://cdn.jsdelivr.net`（v0.2.8 起加 jsdelivr，供 marked/DOMPurify/mermaid）；`style-src 'self' 'unsafe-inline' https://fonts.googleapis.com`；`img-src 'self' data: blob: http: https:`（v0.2.8 起加 `blob:`，供导图导出 `new Image().src=objectURL`）；`font-src 'self' https://fonts.gstatic.com`；`connect-src 'self' https:`。
 
 > ⚠️ `script-src` / `style-src` 含 `'unsafe-inline'`（Tailwind Play CDN 需要），会削弱注入防御；需理解其取舍，加固见文末「已确认缺口」。
 
@@ -67,6 +67,7 @@
 - LLM Key 仅服务端，不下发前端。
 - 缩略图走本站代理端点 `GET /api/thumbnail?url=...`（真实 UA + 对应平台 Referer，复用 `validate_url` 防 SSRF），规避 CND 防盗链 + 浏览器混合内容拦截；防盗链细化留 v2 强化。
 - **AI 端点安全**：新增的 `/api/ai/ask`（SSE 流式问答）与 `/api/ai/summary` 一样**先过 `validate_url`（防 SSRF）+ `ai` 组限流（默认 3/min）**，LLM 调用走服务端 httpx（Key 不下发）。SSE 帧为服务端手写 `data: <json>`（原生 `StreamingResponse`），`json.dumps` 会把 token 内换行/特殊字符转义，不含可注入的裸 HTML/script。
+- **AI 输出消毒（v0.2.8）**：摘要与问答前端**默认用 markdown 渲染**（`marked.parse`），LLM 输出**不可信、必先经 `DOMPurify.sanitize` 再入 DOM**，否则 markdown 可注入裸 `<script>`/事件属性。DOMPurify 默认剥 `script`/事件处理器/`style`，只留安全标签 —— 是 v0.2.8 引入 marked 后新增的注入面，已成对加固。
 - **字幕稿缓存**：`_transcript_cache` 只存内存（TTL `TRANSCRIPT_CACHE_TTL_SECONDS`，超限丢最旧），用于 AI 问答复用，**不落盘、不超过 100 条**；与 job store 同属内存态，重启即清 —— 不属于持久化敏感数据的新面。
 
 ### 9. 抖音（服务端无头浏览器）附加防护
@@ -89,7 +90,7 @@
 
 1. **`EXTRACTOR_ALLOWLIST` 未接入**：`settings.extractor_allowlist` 无任何读取点，`validate_url` 只留注释即 `return url`。启用需在 `validate_url` 里按 `ie_key`/host 校验。不启用则任何站都可被抓（仅靠限流兜底）。
 2. **`APP_TOKEN` 未校验**：任何端点都不检查 `X-App-Token`，配置项无实际效果。启用需加依赖/中间件（全部 `/api` 路由）。
-3. **XSS 注入面收紧**：`static/app.js` `addBatchRow` 用 `innerHTML` 直插 `url` 未转义；CSP `script-src`/`style-src` 含 `'unsafe-inline'`（Tailwind Play CDN 需要但不必然冲突，可改用编译后的 Tailwind 或 `textContent` 赋值）。三处建议：`textContent` 替代 `innerHTML`、`url` 入库前洗、评估是否去掉 `'unsafe-inline'`。⚠️ **已局部改善**：AI 问答气泡（v0.2.6 `askBubble`/`handleAsk`）与格式卡片（v0.2.7 `formatRow`）均已改 `textContent` 赋值（用户问题/模型增量/错误文案/格式名不再进 `innerHTML`）；唯 `addBatchRow` 的 `url` 仍待改。
+3. **XSS 注入面收紧**：`static/app.js` `addBatchRow` 用 `innerHTML` 直插 `url` 未转义；CSP `script-src`/`style-src` 含 `'unsafe-inline'`（Tailwind Play CDN 需要但不必然冲突，可改用编译后的 Tailwind 或 `textContent` 赋值）。三处建议：`textContent` 替代 `innerHTML`、`url` 入库前洗、评估是否去掉 `'unsafe-inline'`。⚠️ **已局部改善**：AI 问答气泡（v0.2.6 `askBubble`/`handleAsk`）已改 `textContent` 赋值（用户问题/模型增量/错误文案不再进 `innerHTML`）；**摘要/问答 markdown（v0.2.8）经 `DOMPurify.sanitize(marked.parse(...))` 消毒后再渲染**，AI 输出注入面已闭环。**仍为注入面**：`formatRow`（`static/app.js`）对 `f.resolution`/`f.ext`（来自 yt-dlp 的平台元数据，属不可信输入）仍用 `innerHTML` 直插——虽一般非用户直接控制，但接的是外部数据、仍是剩余注入面；`addBatchRow` 的 `url` 亦仍待改。
 4. **前端错误文案丢失**：`static/app.js` 的 `api()` 只读 `data.error`，对 `detail` 包裹的 429/503 等会落到通用「请求失败」。建议兼容 `data.detail?.error`。
 
 ## 上线检查清单

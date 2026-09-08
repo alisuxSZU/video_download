@@ -9,6 +9,7 @@
   let current = null; // {url, formats, selected}
   let polling = new Map(); // jobId -> interval
   let lastSummary = ""; // 当前摘要的 Markdown 全文（复制/下载用）
+  let lastChapters = null; // 当前章节·时间轴数据（下载用）
   let askHistory = []; // AI 问答 [{role, content}]
   let askGen = 0;     // 问答会话令牌：提问/清空/换链接递增，用于使在途 SSE 流失效
   let askAbort = null; // 当前提问的 AbortController（清空/换链接时 abort，避免陈旧流写回）
@@ -328,11 +329,14 @@
   // 按「链接 → 功能」缓存结果；链接不变则结果不变，点「重新生成」才强制重算。
   function getCache(url, key) { return (featureCache[url] || {})[key] || null; }
   function setCache(url, key, data) { featureCache[url] = featureCache[url] || {}; featureCache[url][key] = data; }
-  function renderSubtitleData(url, key, d, translate) {
-    $("#subMeta").textContent = `${d.lang || ""} · ${d.source === "manual" ? "内建字幕" : "自动字幕"} · ${(d.format || "").toUpperCase()}`;
+  function renderSubtitleData(url, key, d, translate, targetLang) {
+    // 模式标签：让用户在同一个字幕面板里一眼看清当前是「原字幕」还是「已翻译为：X」
+    $("#subModeLabel").textContent = translate ? `已翻译为：${targetLang}` : "原字幕";
+    $("#subMeta").textContent = `${(d.lang || "") || ""} · ${d.source === "manual" ? "内建字幕" : "自动字幕"} · ${(d.format || "").toUpperCase()}`;
     $("#subText").textContent = d.translated || d.content || "（空）";
-    makeSubDownload(d, translate);
+    makeSubDownload(d, translate, targetLang);
     subModeTranslate = translate;
+    if (translate && targetLang) $("#subLangSel").value = targetLang;
     setCache(url, key, d);
   }
   async function handleSubtitle(translate, force) {
@@ -340,27 +344,29 @@
     if (!url) { toast("请先解析视频链接"); return; }
     hideError();
     showPanel("panelSub");
-    const key = translate ? "subTranslate" : "subtitle";
+    const targetLang = translate ? ($("#subLangSel").value || "简体中文") : "";
+    const key = translate ? "subTranslate:" + targetLang : "subtitle";
     const c = getCache(url, key);
-    if (c && !force) { renderSubtitleData(url, key, c, translate); return; } // 命中缓存而不再请求
+    if (c && !force) { renderSubtitleData(url, key, c, translate, targetLang); return; } // 命中缓存而不再请求
     const box = $("#subText");
-    box.textContent = translate ? "正在翻译…" : "正在提取字幕…";
+    box.innerHTML = skelHTML(4); // 骨架屏占位，替代冗余的「正在提取字幕…」句子
     startBusy(translate ? "正在翻译字幕…" : "正在提取字幕…");
     try {
       const body = { url, lang: "zh", is_auto: false };
-      if (translate) body.target_lang = "简体中文";
+      if (translate) body.target_lang = targetLang;
       const d = await api("/api/subtitles", body);
-      renderSubtitleData(url, key, d, translate);
+      renderSubtitleData(url, key, d, translate, targetLang);
       stopBusy();
-      toast(translate ? "翻译完成" : "字幕已提取");
+      toast(translate ? `已翻译成${targetLang}` : "字幕已提取");
     } catch (e) {
       stopBusy();
       box.textContent = e.message;
       $("#subMeta").textContent = "";
+      $("#subDl").classList.add("hidden"); // 出错时不保留旧字幕可下载
       showError(e.message);
     }
   }
-  function makeSubDownload(d, isTrans) {
+  function makeSubDownload(d, isTrans, targetLang) {
     // 用 Blob 而非 data: URI，防止部分浏览器拦截 data: 下载
     const content = (d.translated || d.content) || "";
     const ext = isTrans ? "txt" : d.format || "srt";
@@ -369,7 +375,10 @@
     if (link._url) URL.revokeObjectURL(link._url);
     link._url = URL.createObjectURL(blob);
     link.href = link._url;
-    link.setAttribute("download", `subtitle.${ext}`);
+    const fname = isTrans ? `字幕-${(targetLang || "译文")}.${ext}` : `字幕.${ext}`;
+    link.setAttribute("download", fname);
+    link.textContent = isTrans ? `下载 TXT（${targetLang || "译文"}）` : `下载 ${ext.toUpperCase()}`; // 明确告诉用户当前下的是什么
+    link.classList.remove("hidden"); // 有内容即揭示下载入口（此前恒 hidden，下载功能形同虚设）
   }
 
   // ---------- 统一分析模块：各面板独立调用 AI ----------
@@ -380,16 +389,23 @@
     const el = $("#" + name);
     if (el) { el.classList.remove("hidden"); el.scrollIntoView({ behavior: "smooth", block: "nearest" }); }
   }
-  const AN_BTNS = ["subBtn", "subTranslate", "sumBtn", "chaptersBtn", "mindmapBtn", "askBtn"];
+  const AN_BTNS = ["subBtn", "subTranslateBtn", "sumBtn", "chaptersBtn", "mindmapBtn", "askBtn"];
   function setAnBtns(disabled) {
     AN_BTNS.forEach((id) => { const el = $("#" + id); if (el) el.disabled = disabled; });
   }
+  // 骨架屏：几段带流光的灰条，占位表示「AI 正在这里生成」，代替冗余的「正在生成…」占位句子
+  function skelHTML(rows) {
+    const widths = ["100%", "88%", "72%", "94%"];
+    let h = "";
+    for (let i = 0; i < rows; i++) h += `<div class="skel" style="width:${widths[i % widths.length]}"></div>`;
+    return h;
+  }
+
   // 单飞守卫：任一 AI 请求进行中时禁用全部功能按钮，避免并发请求交叉清空共享的
   // #anLoading / #anError / toast 状态（原先可同时点多个按钮导致状态互相覆盖）。
   function startBusy(msg) {
-    const l = $("#anLoading");
-    l.textContent = msg || "正在处理…";
-    l.classList.remove("hidden");
+    $("#anLoadingText").textContent = msg || "正在处理…";
+    $("#anLoading").classList.remove("hidden");
     setAnBtns(true);
   }
   function stopBusy() {
@@ -419,6 +435,7 @@
   // 注意：不删 featureCache（缓存按 url 分键），切回旧链接仍能命中缓存恢复。
   function resetAnalyze() {
     lastSummary = "";
+    lastChapters = null;
     askHistory = [];
     subModeTranslate = false;
     mmCollapsed.clear();
@@ -430,12 +447,10 @@
     setAnBtns(false);
     $("#subText").textContent = "";
     $("#subMeta").textContent = "";
+    $("#subModeLabel").textContent = "";
     $("#subDl").classList.add("hidden");
     if ($("#subDl")._url) { URL.revokeObjectURL($("#subDl")._url); delete $("#subDl")._url; }
-    $("#sumTheme").textContent = "";
-    $("#sumOverview").textContent = "";
-    $("#sumPoints").innerHTML = "";
-    $("#sumKeywords").innerHTML = "";
+    $("#sumMd").textContent = "";
     $("#sumChapters").innerHTML = "";
     $("#mindContainer").innerHTML = "";
     askClearChat();
@@ -453,23 +468,27 @@
     return String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   }
 
-  // 摘要
+  // 摘要（v3：Markdown 排版渲染，后端 summary 为全文 Markdown，先消毒再注入）
   function renderSummary(d) {
-    $("#sumTheme").textContent = d.theme || "视频主题";
-    $("#sumOverview").textContent = d.overview || "";
-    $("#sumPoints").innerHTML = (d.key_points || []).map((p) => `<div class="flex gap-2"><span class="text-brand">•</span><span>${esc(p)}</span></div>`).join("");
-    $("#sumKeywords").innerHTML = (d.keywords || []).length
-      ? `<span class="text-xs text-slate-400">关键词：</span>${(d.keywords || []).map((k) => `<span class="chip chip-brand mr-1">${esc(k)}</span>`).join("")}`
-      : "";
-    lastSummary = (d.summary || "").trim()
+    const raw = (d.summary || "").trim()
       ? d.summary
       : (d.theme || "") + "\n\n" + (d.overview || "") + "\n\n" + (d.key_points || []).map((p) => "- " + p).join("\n");
+    lastSummary = raw;
+    const md = $("#sumMd");
+    if (window.marked && window.DOMPurify) {
+      md.innerHTML = window.DOMPurify.sanitize(window.marked.parse(raw));
+    } else {
+      // 极端 CDN 失败兜底：纯文本，用 console.warn 不抛 console.error（e2e 有「无 console error」门禁）
+      md.textContent = raw;
+      console.warn("marked/DOMPurify 未加载，摘要以纯文本显示");
+    }
   }
 
   // 章节·时间轴（独立生成）
   function renderChapters(chapters) {
     const box = $("#sumChapters");
     box.innerHTML = "";
+    lastChapters = chapters || []; // 记录供「下载 .md」使用
     if (!chapters || !chapters.length) {
       box.innerHTML = `<p class="text-xs text-slate-400">该视频较短，暂未细分章节。</p>`;
       return;
@@ -497,6 +516,7 @@
   let mmView = { scale: 1, tx: 0, ty: 0 };
   let mmFitted = false;          // 首次渲染做一次 fit，之后保留用户视图（折叠重绘也不跳）
   let mmDragging = false, mmDragMoved = false, mmDragStart = null;
+  let mmRestoreParent = null, mmRestoreNext = null; // 全屏时搬到 <body> 暂存，退出还原（见 toggleMindFullscreen）
 
   const safeLabel = (s) => {
     let label = String(s || "").replace(/\n/g, " ").trim();
@@ -579,8 +599,6 @@
     vp.setAttribute("id", "mmViewport");
     while (svg.firstChild) vp.appendChild(svg.firstChild);
     svg.appendChild(vp);
-    svg.setAttribute("width", "100%");
-    svg.setAttribute("height", "100%");
 
     // 给每个节点标注 path + 有子节点时添加 折叠/展开 徽标，并绑定点击
     svg.querySelectorAll("g.node").forEach((g) => {
@@ -609,6 +627,24 @@
         if (g.dataset.mmHasChildren === "1") toggleFold(g.dataset.mmPath);
       });
     });
+
+    // ⚠️ mermaid 输出的 svg 自带 viewBox（如 "3 3 1592 585"）。若保留它并设 width/height=100%，
+    // 浏览器会**自动**把整棵树按 viewBox 缩放进容器（对 1568px 宽的树 ≈0.43 倍），随后 fitView 再按
+    // getBBox() 算一次 scale，等于**双倍缩小** → 图被压成一团（前端实测有效缩放 ≈0.17）。
+    // 这里把 svg 归一为「1 用户单位 = 1 像素」：viewBox 收敛到内容 bbox（此 bbox 已含折叠徽标）、
+    // 宽高设为内容像素尺寸。如此 fitView 的 scale 才是一次正确应用，且滚轮/拖拽平移的坐标（按像素算）也对得上。
+    // pad 留给最右/最下节点上的徽标（x=节点右缘+3）与描边，避免被 viewBox 裁掉。
+    let bb;
+    try { bb = svg.getBBox(); } catch (e) {}
+    if (bb && bb.width > 0 && bb.height > 0) {
+      const pad = 10;
+      svg.setAttribute("viewBox", `${bb.x - pad} ${bb.y - pad} ${bb.width + 2 * pad} ${bb.height + 2 * pad}`);
+      svg.setAttribute("width", `${bb.width + 2 * pad}px`);
+      svg.setAttribute("height", `${bb.height + 2 * pad}px`);
+    } else {
+      svg.setAttribute("width", "100%");
+      svg.setAttribute("height", "100%");
+    }
     applyView();
   }
 
@@ -702,6 +738,118 @@
     document.removeEventListener("mouseup", onMmUp);
   }
 
+  // 全屏：给 #panelMind 挂 mm-fullscreen 遮罩态，复用同一 #mindContainer（拖拽/缩放/折叠全保留）
+  function toggleMindFullscreen() {
+    const panel = $("#panelMind");
+    const isFull = panel.classList.toggle("mm-fullscreen");
+    if (isFull) {
+      // ⚠️ 祖先「解析结果卡片」带 transform（animate-rise 的 identity 矩阵），会把
+      // position:fixed 的包含块固定在卡片上而非视口 → 全屏时搬到 <body> 逃生，退出还原。
+      if (!mmRestoreParent) {
+        mmRestoreParent = panel.parentNode;
+        mmRestoreNext = panel.nextSibling;
+      }
+      document.body.appendChild(panel);
+    } else {
+      // 还原回原父节点原位（保持既有布局）
+      const p = mmRestoreParent, n = mmRestoreNext;
+      if (p) { p.insertBefore(panel, n); mmRestoreParent = null; mmRestoreNext = null; }
+    }
+    document.body.style.overflow = isFull ? "hidden" : "";
+    mmFitted = false; // 视口尺寸 60vh→全屏 变化，复位 fit 让整树重新适配
+    fitView();
+  }
+
+  // 下载高清 PNG：原生实现（serialize→Blob→Image→canvas）。mermaid mindmap 标签是
+  // <foreignObject>，经 <img> 光栅化会丢文字（空白），须先转成 <text> 再导出。
+  function exportMindmapPNG() {
+    const svg = document.querySelector("#mindContainer svg");
+    if (!svg) { toast("请先生成思维导图"); return; }
+    const src = svg.querySelector("#mmViewport") || svg;
+    let bb;
+    try { bb = src.getBBox(); } catch (e) { toast("无法导出导图"); return; }
+    if (!bb || !bb.width || !bb.height) { toast("无法导出导图（视图为空）"); return; }
+
+    const pad = 24;
+    const w = Math.ceil(bb.width + pad * 2);
+    const h = Math.ceil(bb.height + pad * 2);
+
+    // 先在**活的** SVG 上读每个 foreignObject 的文本与计算样式（序列化后脱离 DOM，getComputedStyle 会失效）
+    const liveData = Array.from(svg.querySelectorAll("foreignObject")).map((fo) => {
+      const probe = fo.querySelector("span") || fo;
+      const cs = getComputedStyle(probe);
+      return {
+        x: Number(fo.getAttribute("x")) || 0,
+        y: Number(fo.getAttribute("y")) || 0,
+        h: Number(fo.getAttribute("height")) || 0,
+        text: fo.textContent.replace(/\s+/g, " ").trim(),
+        fontSize: cs.fontSize || "16px",
+        fill: cs.color || "#0f172a",
+        fontFamily: cs.fontFamily || "inherit",
+      };
+    });
+
+    const clone = svg.cloneNode(true);
+    clone.querySelectorAll(".mm-fold").forEach((n) => n.remove()); // 去掉 UI 折叠徽标
+    const vp = clone.querySelector("#mmViewport");
+    if (vp) vp.removeAttribute("transform"); // 去掉平移缩放，导出完整树
+
+    // foreignObject -> <text>
+    clone.querySelectorAll("foreignObject").forEach((fo, i) => {
+      const d = liveData[i] || { x: 0, y: 0, h: 0, text: "", fontSize: "16px", fill: "#0f172a", fontFamily: "inherit" };
+      const t = document.createElementNS(MM_NS, "text");
+      t.setAttribute("x", String(d.x + 8));
+      t.setAttribute("y", String(d.y + d.h / 2));
+      t.setAttribute("dominant-baseline", "middle");
+      t.setAttribute("font-size", d.fontSize);
+      t.setAttribute("fill", d.fill);
+      t.setAttribute("font-family", d.fontFamily);
+      t.textContent = d.text;
+      fo.parentNode.insertBefore(t, fo);
+      fo.remove();
+    });
+
+    clone.setAttribute("xmlns", MM_NS);
+    clone.setAttribute("width", String(w));
+    clone.setAttribute("height", String(h));
+    clone.setAttribute("viewBox", `${bb.x - pad} ${bb.y - pad} ${w} ${h}`);
+    const rect = document.createElementNS(MM_NS, "rect");
+    rect.setAttribute("x", String(bb.x - pad));
+    rect.setAttribute("y", String(bb.y - pad));
+    rect.setAttribute("width", String(w));
+    rect.setAttribute("height", String(h));
+    rect.setAttribute("fill", "#ffffff");
+    clone.insertBefore(rect, clone.firstChild);
+
+    let str;
+    try { str = new XMLSerializer().serializeToString(clone); } catch (e) { toast("序列化导图失败"); return; }
+    const url = URL.createObjectURL(new Blob([str], { type: "image/svg+xml;charset=utf-8" }));
+    const img = new Image();
+    img.onload = () => {
+      const maxSide = 4096;
+      const scale = Math.max(1, Math.min(3, maxSide / Math.max(w, h)));
+      const cw = Math.round(w * scale), cht = Math.round(h * scale);
+      const canvas = document.createElement("canvas");
+      canvas.width = cw; canvas.height = cht;
+      const ctx = canvas.getContext("2d");
+      ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, cw, cht);
+      ctx.drawImage(img, 0, 0, cw, cht);
+      canvas.toBlob((png) => {
+        if (!png) { toast("导出图片失败"); URL.revokeObjectURL(url); return; }
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(png);
+        a.download = "mindmap.png";
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+        URL.revokeObjectURL(url);
+        toast("高清导图已导出");
+      }, "image/png");
+    };
+    img.onerror = () => { console.warn("导出导图图片加载失败"); URL.revokeObjectURL(url); toast("导出导图失败"); };
+    img.src = url;
+  }
+
 
   async function handleSummary(force) {
     const url = activeUrl();
@@ -710,7 +858,7 @@
     showPanel("panelSum");
     const c = getCache(url, "summary");
     if (c && !force) { renderSummary(c.data); lastSummary = c.summary; return; } // 命中缓存而不再请求
-    $("#sumTheme").textContent = "生成中…";
+    $("#sumMd").innerHTML = skelHTML(4); // 骨架屏占位，替代冗余的「生成中…」句子
     startBusy("正在生成摘要，长视频耗时较久…");
     askHistory = [];
     try {
@@ -730,7 +878,7 @@
     showPanel("panelChap");
     const c = getCache(url, "chapters");
     if (c && !force) { renderChapters(c.chapters || []); return; } // 命中缓存而不再请求
-    $("#sumChapters").innerHTML = `<p class="text-sm text-slate-400">生成章节时间轴中…</p>`;
+    $("#sumChapters").innerHTML = skelHTML(3); // 骨架屏占位，替代冗余的「生成章节时间轴中…」句子
     startBusy("正在生成章节时间轴…");
     try {
       const d = await api("/api/ai/chapters", { url });
@@ -752,7 +900,7 @@
       await renderMindmap(c.mindmap);
       return;
     }
-    $("#mindContainer").innerHTML = `<span class="text-sm text-slate-400">正在生成导图…</span>`;
+    $("#mindContainer").innerHTML = skelHTML(4); // 骨架屏占位，替代冗余的「正在生成导图…」句子
     startBusy("正在生成思维导图…");
     try {
       const d = await api("/api/ai/mindmap", { url });
@@ -774,6 +922,45 @@
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
     a.download = "video-summary.md";
+    document.body.appendChild(a);
+    a.click();
+    URL.revokeObjectURL(a.href);
+    a.remove();
+  }
+
+  // 章节·时间轴（独立面板）下载 .md：把章节整理为带时间的 Markdown
+  function downloadChapters() {
+    if (!lastChapters || !lastChapters.length) { toast("请先生成章节时间轴"); return; }
+    const lines = ["# 章节时间轴", ""];
+    lastChapters.forEach((c) => {
+      lines.push(`## [${fmtSec(c.start)} - ${fmtSec(c.end)}] ${c.title || ""}`);
+      if (c.summary) lines.push("", c.summary);
+      (c.key_points || []).forEach((p) => lines.push(`- ${p}`));
+      lines.push("");
+    });
+    const blob = new Blob([lines.join("\n")], { type: "text/markdown;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "章节时间轴.md";
+    document.body.appendChild(a);
+    a.click();
+    URL.revokeObjectURL(a.href);
+    a.remove();
+  }
+
+  // 问答 导出对话：把 askHistory 复盘为 Markdown
+  function exportChat() {
+    if (!askHistory.length) { toast("暂无对话可导出"); return; }
+    const lines = ["# 视频问答记录", ""];
+    askHistory.forEach((m) => {
+      const who = m.role === "user" ? "我" : "AI";
+      lines.push(`**${who}**：${m.content}`);
+      lines.push("");
+    });
+    const blob = new Blob([lines.join("\n")], { type: "text/markdown;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "视频问答记录.md";
     document.body.appendChild(a);
     a.click();
     URL.revokeObjectURL(a.href);
@@ -814,6 +1001,21 @@
     }
   }
 
+  // 流结束后把 AI 回答的纯文本渲染成 Markdown（消毒，防 LLM 文本被当 HTML 注入）
+  function renderAskMarkdown(bubble, md) {
+    if (window.marked && window.DOMPurify) {
+      const el = document.createElement("div");
+      el.className = "md";
+      el.innerHTML = window.DOMPurify.sanitize(window.marked.parse(md));
+      bubble.textContent = "";
+      bubble.classList.remove("whitespace-pre-wrap");
+      bubble.appendChild(el);
+    } else {
+      // 极端 CDN 失败兜底：保留纯文本
+      console.warn("marked/DOMPurify 未加载，问答以纯文本显示");
+    }
+  }
+
   async function handleAsk() {
     const btn = $("#askBtn");
     if (btn.disabled) return; // 正在回答中，忽略重复提交（含再按 Enter）
@@ -821,6 +1023,7 @@
     const q = $("#askInput").value.trim();
     if (!url) { toast("请先解析视频链接"); return; }
     if (!q) { toast("请输入问题"); return; }
+    $("#askInput").value = ""; // 发送后清空输入框（问题已进气泡/历史，不再残留）
     showPanel("panelAsk");
     const out = $("#askOutput");
     const myGen = ++askGen;   // 本轮的会话令牌：被清空/换链接（askGen 再 ++）后即失效
@@ -838,6 +1041,7 @@
     out.appendChild(aiMsg.wrap);
     out.scrollTop = out.scrollHeight;
     let started = false;
+    let errorOccurred = false;
     const appendDelta = (text) => {
       if (myGen !== askGen) return; // 已清空/换链接：忽略后续帧，不写进已清空的 DOM
       if (!started) { aiMsg.bubble.textContent = ""; started = true; } // 清掉「…」占位
@@ -875,11 +1079,19 @@
           const json = parseSSEFrame(frame);
           if (!json) continue;
           if (json.delta) { appendDelta(json.delta); full += json.delta; }
-          else if (json.error) { appendDelta("\n[错误] " + json.error); }
+          else if (json.error) { errorOccurred = true; appendDelta("\n[错误] " + json.error); }
+          else if (json.status && !started) {
+            // 生成前阶段实时进度：字幕检索/上下文构建/开始生成都会先推 status 帧，
+            // 让用户看到「流已经动起来」，而非静默等待到首 token（冷路径可能 2s+）。
+            typing.textContent = json.status === "preparing" ? "正在检索字幕与上下文…" : "正在生成回答…";
+            out.scrollTop = out.scrollHeight;
+          }
         }
       }
       // 无任何 delta（空回复）：清掉「…」占位、不写历史，避免气泡卡在思考态
       if (!started) aiMsg.bubble.textContent = "(无回答)";
+      // 流正常结束且未被错误中断：把纯文本 render 成 Markdown（仅当前会话、有内容、未被清空/换链接）
+      if (started && full && !errorOccurred && myGen === askGen) renderAskMarkdown(aiMsg.bubble, full);
       if (full && myGen === askGen) askHistory.push({ role: "user", content: q }, { role: "assistant", content: full });
     } catch (e) {
       if (e.name === "AbortError") {
@@ -924,8 +1136,8 @@
   $("#copyLink").onclick = () => { if (current) { navigator.clipboard.writeText(current.url).then(() => toast("链接已复制")); } };
   $("#addToBatch").onclick = () => { if (current) submitBatch([{ url: current.url, format_id: current.selected || null }]); };
   $("#clearBatch").onclick = () => { $("#batchList").innerHTML = ""; showBatch(false); };
-  $("#subBtn").onclick = () => handleSubtitle(false);
-  $("#subTranslate").onclick = () => handleSubtitle(true);
+  $("#subBtn").onclick = () => handleSubtitle(false);       // 🎬 字幕：回到「原字幕」视图
+  $("#subTranslateBtn").onclick = () => handleSubtitle(true); // 翻译为：选中的语言（点一下即翻）
   $("#sumBtn").onclick = () => handleSummary();      // 不能直接绑定 handleSummary：onclick 会把事件对象当 force 传入导致永远重算
   $("#chaptersBtn").onclick = () => handleChapters();
   $("#mindmapBtn").onclick = () => handleMindmap();
@@ -935,9 +1147,11 @@
   $("#askBtn").onclick = handleAsk;
   $("#askInput").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); handleAsk(); } });
   $("#askClear").onclick = () => askClearChat(true); // 用户主动清空：复位按钮，允许立即再问
+  $("#askExport").onclick = exportChat;
   $("#subRefresh").onclick = () => handleSubtitle(subModeTranslate, true);
   $("#sumRefresh").onclick = () => handleSummary(true);
   $("#chaptersRefresh").onclick = () => handleChapters(true);
+  $("#chaptersDownload").onclick = downloadChapters;
   $("#mindRefresh").onclick = () => handleMindmap(true);
   // 导图工具栏：拖动/滚轮缩放由 bindMindmapInteractions 处理；这里负责按钮 + 折叠/展开
   $("#mmZoomIn").onclick = () => { mmView.scale = Math.min(6, mmView.scale * 1.2); applyView(); };
@@ -955,6 +1169,8 @@
     walk(mmTree, "0");
     renderMindmap(mmTree);
   };
+  $("#mmFullscreen").onclick = toggleMindFullscreen;
+  $("#mmDownload").onclick = exportMindmapPNG;
   bindMindmapInteractions();
   $("#upgradeBtn").onclick = openPro;
   $("#ctaUpgrade").onclick = openPro;

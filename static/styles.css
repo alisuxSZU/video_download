@@ -116,6 +116,38 @@ details summary::-webkit-details-marker { display:none; }
 .an-btn:disabled { opacity: .5; cursor: not-allowed; }
 
 /* 思维导图（Mermaid）容器 */
+/* #mindContainer 需要裁剪：svg 已归一为「内容像素尺寸」（可能是 1568px 宽），须在容器内裁掉溢出部分 */
+#mindContainer { overflow: hidden; }
 #mindContainer svg { max-width: none; }
 #mindContainer .mind-node, #mindContainer .mind-root-list { color: #334155; }
 #mindContainer .mind-branch { margin-left: 8px; border-left: 2px solid #e2e8f0; padding-left: 10px; list-style: none; }
+
+/* 思维导图全屏遮罩态（复用同一 #mindContainer，拖拽/缩放/折叠交互全保留） */
+#panelMind.mm-fullscreen { position: fixed; inset: 0; z-index: 120; background: #fff; margin: 0; display: flex; flex-direction: column; }
+#panelMind.mm-fullscreen > div { flex: 1 1 auto; display: flex; flex-direction: column; border-radius: 0; overflow: hidden; }
+#panelMind.mm-fullscreen #mindContainer { flex: 1 1 auto; height: auto !important; }
+
+/* Markdown 渲染排版（问答气泡 .md 与摘要 .md 共用；样式内联，CSP style-src 不放行外部样式表） */
+.md { line-height: 1.7; color: #334155; font-size: 14px; word-break: break-word; }
+.md h1, .md h2, .md h3 { font-weight: 700; color: #0f172a; margin: .5em 0 .3em; line-height: 1.3; }
+.md h1 { font-size: 1.35em; }
+.md h2 { font-size: 1.2em; }
+.md h3 { font-size: 1.05em; }
+.md p { margin: .5em 0; }
+.md ul, .md ol { padding-left: 1.2em; margin: .5em 0; }
+.md li { margin: .15em 0; }
+.md code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .85em; background: #f1f5f9; padding: .1em .35em; border-radius: 4px; }
+.md pre { background: #0f172a; color: #e2e8f0; padding: .8em 1em; border-radius: 8px; overflow: auto; font-size: 13px; line-height: 1.5; }
+.md pre code { background: transparent; color: inherit; padding: 0; }
+.md blockquote { border-left: 3px solid #cbd5e1; margin: .6em 0; padding: .2em 0 .2em .9em; color: #64748b; }
+.md table { border-collapse: collapse; margin: .6em 0; font-size: .9em; }
+.md th, .md td { border: 1px solid #e2e8f0; padding: .35em .6em; }
+.md th { background: #f1f5f9; font-weight: 600; }
+.md a { color: #1777ff; text-decoration: underline; }
+
+/* AI 生成中动效：加载条旋转环（#anLoading .spin）+ 面板内骨架屏（.skel，带流光），
+   给「AI 正在工作」一个可见的动画反馈（代替原先冗长又重复的占位句子） */
+.spin { display: inline-block; width: 14px; height: 14px; flex: 0 0 auto; border: 2px solid #cbd5e1; border-top-color: #1777ff; border-radius: 50%; animation: spin .7s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.skel { height: 12px; border-radius: 6px; background: linear-gradient(90deg, #eef2f7 25%, #e2e8f0 37%, #eef2f7 63%); background-size: 200% 100%; animation: skel 1.2s ease-in-out infinite; margin: .5rem 0; }
+@keyframes skel { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }

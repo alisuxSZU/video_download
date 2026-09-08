@@ -29,7 +29,7 @@ Base URL：`http://<host>:<port>`（默认 `8000`）。
 
 ## 1. GET `/api/health`
 
-存活探针。`→ 200 {"ok": true, "version": "0.1.0", "ffmpeg": true}`（`ffmpeg` 为服务端 ffmpeg 是否可用）
+存活探针。`→ 200 {"ok": true, "version": "0.3.0", "ffmpeg": true}`（`ffmpeg` 为服务端 ffmpeg 是否可用；`version` 随 `config.py#Settings.version` 前进）
 
 ## 2. POST `/api/parse`
 
@@ -158,6 +158,8 @@ Base URL：`http://<host>:<port>`（默认 `8000`）。
 
 请求：`{"url":"...","lang":"zh","is_auto":false,"target_lang":"简体中文"}`（`target_lang` 有则翻译）
 
+- `target_lang` 为**自由语言名**（`ai.translate` 直接拼进 LLM 系统提示的「翻译成{target_lang}」）。前端「字幕」模块（**单个「🎬 字幕」按钮**，面板内「翻译为：下拉 + 翻译」控制）经 `#subLangSel` 提供 5 个选项：`简体中文 / 繁体中文 / 英文 / 日语 / 朝鲜语`（默认简体中文）；**切换语言后点「翻译」或「重新生成」即按新语言重翻**，缓存键为 `url→subTranslate:{target_lang}`（逐语言独立缓存）。省略或空字符串则只提取不翻译。
+
 响应 200：
 ```json
 {
@@ -171,6 +173,8 @@ Base URL：`http://<host>:<port>`（默认 `8000`）。
 ```
 
 错误：400 / 429 / 502（`no_subtitles` 无字幕、`llm` 翻译失败）。
+
+> **前端下载**：提取成功即把 `content`（手动字幕为 `format` 后缀，如 `.srt`）/`translated`（译文为 `.txt`）生成 Blob 放进 `#subDl` 的 `<a download>`；翻译文件名形如 `字幕-英文.txt`。此为**纯前端 Blob 下载**，无对应后端端点。
 
 ## 10. POST `/api/ai/summary`
 
@@ -199,7 +203,7 @@ Base URL：`http://<host>:<port>`（默认 `8000`）。
     "title": "<=theme>",
     "children": [{"title": "<章节title>", "children": [{"title": "<要点>"}]}]
   },
-  "summary": "# <theme>\n\n<overview>\n\n## 章节\n### [00:00 - 03:33] <chapter.title>\n...",
+  "summary": "# <theme>\n\n<overview>\n\n## 要点\n- <要点1>\n- <要点2>\n\n## 关键词\nkw1 kw2",
   "lang": "zh",
   "model": "deepseek-chat",
   "is_auto": false,          // 取的是自动字幕还是手动字幕
@@ -207,8 +211,9 @@ Base URL：`http://<host>:<port>`（默认 `8000`）。
 }
 ```
 
-> **行为分档**：字幕总字符 ≤ `AI_SINGLE_SHOT_CHARS`（短）→ 单次直出 + 合成一条覆盖全片时间的章节；超出 → 分块成最多 `AI_MAX_CHAPTERS` 个章节做 map-reduce，从而产生真实时间轴。`mindmap` 由结构**确定性派生**（无额外 LLM 调用）。
-> `summary` 为 Markdown 全文（含完整章节+关键词），供前端「复制 / 下载 .md」。
+> **行为分档（v0.3.1 起）**：`时长 ≥ AI_CHAPTER_GOAL_SECONDS`（默认 600s≈10 分钟）**或** 字幕总字符 ≥ `AI_SINGLE_SHOT_CHARS`（30000）任一满足 → **分块**成最多 `AI_MAX_CHAPTERS` 个章节做 map-reduce，产生真实时间轴；否则 → 单次直出 `{theme, overview, key_points[], keywords[]}`，**`chapters` 为 `[]`**（不再合成一条覆盖整片时长的伪章节）。⚠️ 此前仅按字符分档，口述访谈等**每分钟字数少**的长视频会被误判为「短片」并合成 `[00:00 - 整片时长] 标题=主题、摘要=总览` 的重复伪章节——已修复。`mindmap` 由结构**确定性派生**（无额外 LLM 调用）。
+> `summary` 为 **纯叙述 Markdown**（主题+总览+`## 要点`+`## 关键词`，**不含 `## 章节`/时间戳**——时间轴由独立「章节·时间轴」面板承载），供前端「复制 / 下载 .md」。⚠️ 无论长短视频，`summary` 均无 `## 章节` 块（v0.3.1 起）；短视频 `chapters` 为 `[]`、`mindmap.children` 回退为顶层 `key_points`。
+> `chapters` 字段本身（含 `start/end/title/summary/key_points`）仍在响应中，供「章节·时间轴」面板/导出及 `derive_mindmap` 消费；只是不内嵌进摘要 Markdown。
 > `used_source` 反映取的是手动（`manual`）还是自动（`auto`）字幕，不再恒为 `transcript`。
 
 错误：400 / 429 / 502（`no_subtitles` 无字幕、`llm` LLM 未配置或失败）。
@@ -224,21 +229,27 @@ Base URL：`http://<host>:<port>`（默认 `8000`）。
 响应：`Content-Type: text/event-stream`。每帧 `data: <JSON>`，事件序列形式如下：
 
 ```text
-data: {"delta": "回答的字词片段"}
+data: {"status": "preparing"}   # 流一经建立立即推出：正在检索字幕与上下文（冷路径可能 2s+）
+data: {"status": "generating"}  # 字幕就绪、进入 token 生成阶段
+data: {"delta": "回答的字词片段"}   # 逐 token 增量
 data: {"delta": "..."}
 ...
 data: {"error": "友好中文"}   # 出错即终止流，不再补发 done（见下）
 data: {"done": true}          # 正常结束
 ```
 
+- **status 帧提升“及时性”**：把「字幕抽取 + 上下文构建」这段冷路径也挪进流内，SSE 连接一建立就推 `preparing`，待字幕就绪再推 `generating`，随后逐 token 推 `delta` —— 前端在首个 token 之前就有状态反馈，避免“请求后长时间空白”。
+- **网络层不缓冲**：响应带 `Cache-Control: no-cache` + `X-Accel-Buffering: no`，防止 nginx 等反向代理把流缓冲到收尾才一次性吐出。
 - **出错帧即终止**：若中途出错，服务端推一条 `{"error": "..."}` 帧后**直接结束响应**，不会再发 `{"done": true}` —— 因为前端用 `done` 作为「完成」信号，若出错后再补 `done` 会把失败覆盖成"无回答"。前端随后可在错误帧处停止拼接。
 - 前端用 `fetch` + `ReadableStream` 逐帧解析（`EventSource` 仅支持 GET，本端点为 POST，故用流式 fetch）。
 - 服务端按「问题关键词 × 字幕条」打分，取**时间连续、逐行带 `[MM:SS - MM:SS]` 的细粒度时间线窗口**（预算 ≤ `AI_CHAT_CONTEXT_CHARS`，关键词全不匹配则退回章节级上下文）作为上下文，**无需先调 `/ai/summary`**。
 - **时间定位**：因上下文逐条带时间戳，且提示词要求——对「哪一段 / 哪几分钟 / 什么时候」这类定位题依据时间戳回答具体时间段，模型可直接给出像 `44:20–44:43` 这样的分钟级区间；片段未覆盖时如实说明、不编造时间。
 
-错误：非 SSE 时返回 400 / 429 / 502（`no_subtitles`、`llm`）；SSE 进行中出错则推 `{"error": "..."}` 帧并终止流。
+错误：本端点几乎恒以 **200 + SSE 流** 应答（服务端无法预知流式进行的中间成功）：
+- **URL 非法 / 超限**：请求前校验，仍为 400 / 429（`rate_limited`，来自 shared `ai` 组）。
+- **无字幕 / LLM 失败**（`no_subtitles`、`llm`）：不强拆成 502，而是**在流内推 `{"error": "..."}` 帧并终止**（HTTP 200）。前端据此区分“出错”并停止拼接，不再依赖异常响应码。其中 `no_subtitles` 帧**额外带 `"code": "no_subtitles"`**（供前端按类型提示文案）；LLM 失败与字幕抽取的 generic 异常帧**无 `code`**。
 
-> ⚠️ **AI 限流**：`/api/ai/summary`、`/api/ai/chapters`、`/api/ai/mindmap`、`/api/ai/ask` 与 `/api/subtitles`（字幕提取/翻译）共用**同一限流组 `ai`**，默认 `RATE_AI_PER_MIN=3`（每 IP 每分钟）。因此 60 秒内连点 4 个以上功能会触发 `429 rate_limited`（"操作过于频繁"）。这是刻意的 API 止损；如需"多点连用"体验，可调高 `RATE_AI_PER_MIN`（.env）。
+> ⚠️ **AI 限流**：`/api/ai/summary`、`/api/ai/chapters`、`/api/ai/mindmap`、`/api/ai/ask` 与 `/api/subtitles`（字幕提取/翻译）共用**同一限流组 `ai`**，默认 `RATE_AI_PER_MIN=30`（每 IP 每分钟）。普通用户一次连点多个 AI 功能 + 问几个问题（~10 次/分钟）不会被打断；但仍保留刷量拦截（脚本/爬虫 60 秒内连点三十多次会触发 `429 rate_limited`）。如需更宽松/更严格可在 `.env` 调 `RATE_AI_PER_MIN`。
 
 ## 错误格式
 
