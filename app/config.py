@@ -41,7 +41,7 @@ def _float(v: str | None, default: float) -> float:
 class Settings:
     host: str = os.getenv("HOST", "0.0.0.0")
     port: int = _int(os.getenv("PORT"), 8000)
-    version: str = "0.3.1"
+    version: str = "0.4.1"
 
     # ---- 下载 / 临时文件 ----
     # 尽量用短路径，规避 Windows 260 长度限制

@@ -1,5 +1,56 @@
 # CHANGELOG — 按里程碑记录的实现进度与决策变更
 
+## [0.4.1] — 验收反馈修复：布局打磨（等高/内部滚动/头部固定/居中）+ LLM 偶发重试（2026-09-08）
+
+> 主人验收 v0.4.0 时逐条反馈的体验问题（均附截图标注），全部真实浏览器回归通过。
+
+### Changed / 布局
+- **顶部导航遮挡**：`showResult` 的 `scrollIntoView({block:"start"})` 把结果面板顶到视口最上，被 sticky 导航（64px）遮挡标题 → `#resultPanel / #batchPanel / .an-panel` 加 `scroll-margin-top: 5rem`，滚动自动让出导航高度。
+- **右栏标题溢出卡片**：`#anTitle` 是 inline 元素，`truncate` 不生效、长标题横向越界 → 改 `block truncate` + 父容器 `min-w-0`；完整标题写入 `title` 属性（鼠标悬停可见）。
+- **封面下方空白 / 竖长**：封面 `self-stretch` 铺满标题行后 160×180 过竖长 → 封面限 `max-h-32`（≤128px）+ 标题 `.clamp-title`（**3 行省略**，完整进 `title`）+ 标题/简介列 `justify-center`：封面 160×~127 横版、**零空白**。
+- **Tab 默认不激活**（主人：摘要默认像被点击，不可以）：去掉 `sumBtn` 初始 `ai-tab-active`，解析成功后**无任何 Tab 选中**；`resetAnalyze` 清空激活态；新增 `#anEmpty` 空态占位（点击标签后隐藏）；按主人要求**删除**「以下功能针对当前已解析视频…」说明段。
+- **左侧标题下方无空白 + 描述排版**：`#dlMeta` 与描述均在标题下方自然排布。
+- **左右等高 + 内部滚动**（主人：左右应该等高，内容过多用上下拖动条）：`#resultPanel` grid 去 `items-start`（默认 stretch **等高**），左右卡片 `lg:max-h-[75vh]`；右栏改 `lg:flex lg:flex-col`——**头部（视频标题+Tab）`shrink-0` 固定**，`#anBody` 内容区 `flex-1 min-h-0 overflow-y-auto`。
+- **内容面板无空白 + 单滚动条**（主人：问答/字幕下方空白太多；不应有 2 个拖动条）：问答/字幕/摘要/章节面板桌面下统一 `height:100%; margin-top:0` + 内容区（`#askOutput`/`#subText`/`#sumMd`/`#sumChapters`）`flex-1 min-h-0 overflow-y-auto`——内容少时面板**撑满**（无空白），内容多时**仅面板内一个滚动条**（⚠️ `margin-top` 残留 16px 会溢出 `#anBody` → 双滚动条，已归零）。
+- **首次解析居中**（主人：第一次解析可以先放中间，之后再靠左）：解析中（`#analyze` 仍 hidden）左栏卡片 `#resultPanel:has(#analyze[hidden]) > div > div:first-child { grid-column:1/-1; max-width:48rem; margin-inline:auto }` → **768px 居中**；解析完成后自动恢复「左 col-span-5 + 右 col-span-7」。
+
+### Fixed / LLM 偶发加固
+- **`app/ai.py` `_chat` 自动重试一次**：网络异常/超时/429/5xx 可重试（401/400 等确定性错误直接失败）——长视频 map-reduce 多路并发时任一路失败曾使摘要/章节/导图端点**偶发 502**（e2e 连跑观察 2 次）。
+- **`app/ai.py` `_chat_json` 解析异常重生成一次**：LLM 偶发输出非严格 JSON（`_parse_json` 抛「格式异常」，`_chat` 的网络重试覆盖不到）→ 重新生成一次；导图/章节（JSON 解析路径）不再偶发 502。
+
+### Fixed / 其它
+- `#analyze` 改为 `lg:flex` 后 UA 的 `[hidden]{display:none}` 被 display 类覆盖（解析前右栏会显示）→ `#analyze[hidden]{display:none!important}` 兜底；带 display 类的面板统一补 `.x.hidden{display:none}`。
+
+### Verified
+- ✅ `e2e_features.py` / `e2e_test.py` 全绿、无 console 错误；新增断言：默认无激活 Tab、空态占位、左右等高（603=603）、内容区内部滚动（`#sumChapters` scrollH 2442 > clientH 615）、右栏头部固定（`anTitle` 105.3→105.3）、`#anBody` 无第二滚动条（bodySh==bodyCh）。
+- ✅ 探针（1568 视口）：解析中 768px 居中（偏移 0px）→ 完成后 452+643 分栏；字幕/问答面板撑满（gapBelowPanel=0）；封面 160×127、下方 0 空白；标题 3 行省略 + `title` 属性含完整 63 字。
+
+## [0.4.0] — 视频信息 + AI 总结同屏：左右分栏 + Tab 栏 + 「解析后自动生成摘要」（2026-09-08）
+
+> 目标（主人反馈截图）：**视频信息（下载）与视频总结分属上下两个板块，页面纵向过长、无法一屏同览**。改为**桌面左右双栏**——左栏视频信息/清晰度/下载，右栏 AI 功能 Tab（摘要在右，默认激活）；并提供「解析后自动生成摘要」开关（默认关，手动开启），开启后**点击解析即自动出摘要，无需再点一次**。移动端自动上下堆叠。
+
+### Added / 前端
+- **`static/index.html`**：`#resultPanel` 由单列卡片改为 `grid lg:grid-cols-12` 双栏——左 `lg:col-span-5`（原视频信息 + 新增 `#dlDesc` 描述 + 清晰度 + 下载 + 进度），右 `lg:col-span-7`（原 `#analyze` 整体变为右栏卡片，`hidden` 语义不变，解析前/失败时隐藏）。
+- **AI 功能按钮宫格 → Tab 标签栏**：`#aiTabs` 内 5 个 Tab（`#sumBtn` 摘要(默认激活) / `#chaptersBtn` 章节·时间轴 / `#mindmapBtn` 思维导图 / `#subBtn` 字幕 / `#askOpenBtn` 问答），全部沿用原按钮 ID，既有事件绑定与 e2e 断言零破坏；Tab 栏窄屏可横向滚动。
+- **`#autoSumToggle` 开关**（右栏顶部，`解析后自动生成摘要`）：localStorage（`vdl_auto_summary`）持久化，默认**关闭**（人工确认）。
+- **`static/app.js`**：`renderDesc()` 渲染左栏描述（`textContent` 防注入，>120 字提供「展开/收起」）；`selectTab(btnId)` 统一 Tab 高亮 + 面板显隐（`TAB_PANEL` 映射）；`maybeAutoSummary(url)` 在 `parseSingle` 成功后调用——开关开且无任务在跑 → 命中缓存直接渲染或自动调 `handleSummary()`；`handleSummary` 加**竞态守卫**（请求返回后 `activeUrl() !== url` 则丢弃，防换链接后旧摘要回写）。
+- **`static/styles.css`**：`.ai-tab` / `.ai-tab-active`（胶囊 Tab 样式）、`.clamp-desc`（描述折 4 行 / `.open` 展开全文）。
+
+### Added / 后端
+- **`app/downloader.py`** `_build_payload`：`/api/parse` 新增 `description` 字段（`info["description"]` 压缩空白 + 截断 800 字符；无简介为空串）。
+- **`app/config.py`**：`version` `0.3.1 → 0.4.0`。
+
+### Tests
+- **`e2e_test.py`**：新增断言——Tab 栏 5 Tab 顺序正确、默认激活「摘要」、`#dlDesc` 展示视频描述、自动摘要**默认关**（解析后 `/api/ai/summary` 请求数为 0）。
+- **`e2e_features.py`**：`PARSE_BODY` 补 `description`；新增场景 2b（Tab/描述/默认关）与 2c（勾选开关 → 重新解析 → **自动**请求 1 次 summary 并渲染、再点摘要 Tab 命中缓存不重发、开关持久化）。
+
+### Verified
+- ✅ `e2e_features.py` mock 全绿、无控制台报错（含自动摘要新场景）。
+- ✅ 手动探针/浏览器：1440px 左窄右宽同屏；375px 移动端上下堆叠（先视频信息后总结）；开关 ON → 解析 → 摘要自动出现且仅 1 次请求；OFF → 0 次；Tab 切换高亮正确；导图全屏/PNG 导出在 Tab 容器内可用。
+- ✅ `e2e_test.py`（真实公网链接）全绿、无控制台报错。
+
+> 说明：自动摘要开启后每次解析消耗 1 次 LLM 调用（受 `RATE_AI_PER_MIN` 限流约束）；默认关闭规避误耗，符合人工确认的选择。
+
 ## [0.3.1] — 章节伪章节修复：长时长低字数访谈被误判为「短视频」（2026-09-08）
 
 > 主人反馈（附截图）：摘要卡片里「章节」一节出现 `[00:00 - 01:02:52] 许成钢教授研判…` 显得**莫名其妙**，且**前后内容重复**——章节标题=主题、章节摘要=总览，同一段话在摘要顶部与章节区各出现一次。

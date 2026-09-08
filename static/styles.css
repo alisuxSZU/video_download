@@ -151,3 +151,87 @@ details summary::-webkit-details-marker { display:none; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .skel { height: 12px; border-radius: 6px; background: linear-gradient(90deg, #eef2f7 25%, #e2e8f0 37%, #eef2f7 63%); background-size: 200% 100%; animation: skel 1.2s ease-in-out infinite; margin: .5rem 0; }
 @keyframes skel { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+
+/* ===== v0.4.0 左右分栏：AI 功能 Tab 栏 ===== */
+.ai-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: 9999px;
+  color: #64748b;
+  background: #f1f5f9;
+  border: 1px solid transparent;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background .15s ease, color .15s ease, border-color .15s ease;
+}
+.ai-tab:hover { color: #1777ff; background: #eaf2ff; }
+.ai-tab.ai-tab-active { color: #fff; background: #1777ff; border-color: #1777ff; }
+.ai-tab:disabled { opacity: .5; cursor: not-allowed; }
+
+/* 视频描述：默认折叠 4 行，点「展开」显示全文 */
+.clamp-desc {
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.clamp-desc.open { display: block; -webkit-line-clamp: unset; overflow: visible; }
+
+/* 视频标题：最多 3 行，超出省略（完整标题由 JS 写入 title 属性，鼠标悬停可见） */
+.clamp-title {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+
+/* 滚动定位让出顶部 sticky 导航（header h-16=64px）：scrollIntoView 会按此预留偏移，
+   避免解析结果/批量队列/功能面板滚到视口顶后被导航遮挡 */
+#resultPanel, #batchPanel, .an-panel {
+  scroll-margin-top: 5rem;
+}
+
+/* #analyze 已改为 display:flex（lg），但解析前/失败时必须隐藏：
+   UA 默认的 [hidden]{display:none} 会被 flex 类覆盖，这里显式兜底 */
+#analyze[hidden] { display: none !important; }
+
+/* 第一次解析中（右栏 #analyze 仍隐藏）：左栏信息卡片占满整行并居中展示（max-w-3xl），
+   解析完成后自动变回「左 col-span-5 + 右 col-span-7」的左右分栏布局 */
+@media (min-width: 1024px) {
+  #resultPanel:has(#analyze[hidden]) > div > div:first-child {
+    grid-column: 1 / -1;
+    width: 100%;
+    max-width: 48rem; /* max-w-3xl */
+    margin-inline: auto;
+  }
+}
+
+/* 内容面板（桌面 lg+）：统一「撑满右栏剩余高度 + 内容区内部滚动」，
+   避免面板内容较短时露出大片空白（用户反馈：字幕下方空白太多）。
+   margin-top 必须为 0：height:100% 若再叠 mt-4 会溢出内容区 16px，导致 #anBody 出现第二个滚动条 */
+@media (min-width: 1024px) {
+  #panelAsk, #panelSub, #panelSum, #panelChap {
+    display: flex; flex-direction: column; height: 100%; margin-top: 0;
+  }
+  #panelAsk.hidden, #panelSub.hidden, #panelSum.hidden, #panelChap.hidden { display: none; }
+
+  /* 问答：对话列表撑满、输入行贴底 */
+  #panelAsk .ask-card { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; }
+  #panelAsk .ask-card > #askOutput { max-height: none; flex: 1 1 auto; min-height: 0; }
+  #panelAsk .ask-card > .ask-input { flex: 0 0 auto; }
+
+  /* 字幕：文本区撑满并内部滚动 */
+  #panelSub > #subText { max-height: none; flex: 1 1 auto; min-height: 0; }
+
+  /* 摘要：Markdown 区域撑满并内部滚动（浅蓝背景延伸到底部） */
+  #panelSum > #sumMd { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+  #panelSum > .flex { flex: 0 0 auto; }
+
+  /* 章节：列表撑满并内部滚动 */
+  #panelChap > #sumChapters { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+}

@@ -42,6 +42,7 @@ Base URL：`http://<host>:<port>`（默认 `8000`）。
 {
   "ok": true,
   "title": "Big Buck Bunny",
+  "description": "这是一段视频简介……",
   "thumbnail": "https://...",
   "duration": 596.0,
   "extractor": "ArchiveOrg",
@@ -67,6 +68,8 @@ Base URL：`http://<host>:<port>`（默认 `8000`）。
 ```
 
 > `formats` 已由后端 `_clean_formats` 过滤/去重：纯音频流不展示（`vcodec` 不会为 `null`），且已剔除 yt-dlp 的 **`sb*` 故事板伪格式**（`ext/protocol='mhtml'`、`filesize=0`、无真实码流，如「180p MHTML」）——只留真实可下的视频，故 `ext` 不出现 `mhtml`。
+
+> `description`（v0.4.0 新增）：视频简介，已压缩空白并截断至 **800 字符**；无简介时为空字符串 `""`，不报错。
 
 错误：400 / 403 / 404 / 422 / 429 / 500 / 502 / 504（经 `friendly_error` + `error_status` 映射，非固定子集）。
 

@@ -71,6 +71,28 @@
 | 章节细化 ~10 分钟（v0.2.8，已实现） | `segment_chapters` 增加 `goal_seconds` 判据：章累计时长 ≥ `AI_CHAPTER_GOAL_SECONDS`（默认 600）**或** 字符 ≥ `max_chars` 先到先切。全局默认，不改 models/routes/前端请求体；四处调用点（summarize/chapters/mindmap/retrieve）自动同一行为。短于 10 分钟视频仍单章 |
 | AI 体验三处修复（v0.2.9，已实现） | 主人演示反馈的三个体验问题：① **思维导图缩成一团**（真 BUG、双倍缩放）：mermaid 输出的 svg 自带 `viewBox`（如 `3 3 1592 585`），若再写 `width/height=100%`，浏览器**自动**按 viewBox 把整树缩进容器（≈0.43），随后 `fitView` 又按 `getBBox()` 算一次 scale（≈0.40）→ 有效 ≈**0.17** → 压团。改法：`setupMindmapDom` 把 svg **归一为「1 用户单位=1 像素」**（viewBox 收敛到内容 bbox 留 10px 边距、宽高设像素尺寸、`#mindContainer` 加 `overflow:hidden`），`fitView` 故只作用一次，且滚轮/拖拽坐标（按像素）精确。② **问答 SSE 感知不及时**：`_chat_stream` 本为逐 token 流式，但生成前有「字幕抽取+上下文构建」冷路径（可能 2s+）静默等待，观感像「等全部生成完才吐」。改法：把冷路径挪进 `event_stream`，流一启即推 `{"status":"preparing"}`→`{"status":"generating"}`→逐 token `delta`，并给 `StreamingResponse` 加 `Cache-Control: no-cache`/`X-Accel-Buffering: no`/`Connection: keep-alive` 防反代缓冲；前端识别 `status` 帧把占位符实时切换为文案。③ **问答发送后输入框残留**（真 BUG）：`handleAsk` 读走 `q` 后从未清空 → 校验通过后即 `#askInput.value=''`。**安全取舍**：无字幕/LLM 错误改以流内 `{"error":...}` 帧终止（**HTTP 200**，服务端无法预知流式中间成败）而非 502；前端已能识别 `error` 帧、不补发 `done` 覆盖失败态 |
 
+### v0.4.0 决策：视频信息 + AI 总结同屏（已人工确认，已实现）
+
+| 项 | 决策 |
+|---|---|
+| 布局 | 桌面**左右双栏**（`grid lg:grid-cols-12`：左 col-span-5 视频信息/清晰度/下载，右 col-span-7 AI 功能）；<lg 自动**上下堆叠**（先左后右） |
+| 右栏形态 | **Tab 标签栏**（摘要[默认] / 章节·时间轴 / 思维导图 / 字幕 / 问答），沿用原按钮 ID，保留 `.an-panel` 面板结构 |
+| 自动摘要 | **默认关**（人工确认），右栏 `#autoSumToggle` 开关 + localStorage（`vdl_auto_summary`）；开启后解析成功自动调 `/api/ai/summary`（缓存命中直接渲染），无需再点一次 |
+| 视频描述 | `/api/parse` 补 `description`（≤800 字符，空白压缩）；左栏 `textContent` 渲染 + 折叠 4 行 + 「展开/收起」（>120 字） |
+| 范围 | 本次只做布局 + 自动摘要；Visual Storytelling / 动态网站 / 互动指南 不在本期 |
+
+### v0.4.1 决策：验收反馈修复（已人工确认，已实现 + 回归）
+
+| 项 | 决策 |
+|---|---|
+| 滚动遮挡 | 全局 `scroll-margin-top: 5rem`（`#resultPanel/#batchPanel/.an-panel`），`scrollIntoView` 自动避开 sticky 导航 |
+| 标题 | 右栏标题单行省略（完整进 `title` 悬停）；左栏标题 `.clamp-title` 3 行省略（完整进 `title`）；封面 `max-h-32`（≤128px）横版铺满、零空白 |
+| Tab | 解析成功后**默认无选中**；`#anEmpty` 空态占位（点击标签后隐藏）；删除「以下功能…」说明段（主人要求） |
+| 等高 | 左右卡片等高（grid stretch）；右栏**头部（标题+Tab）固定**；`#anBody` 内容区 `flex-1 min-h-0 overflow-y-auto` |
+| 面板 | 问答/字幕/摘要/章节 桌面下 `height:100%; margin-top:0` + 内容区 `flex-1 min-h-0`——内容少撑满（无空白）、内容多**仅面板内一个滚动条** |
+| 居中 | 解析中（`#analyze[hidden]`）左栏卡片占满整行、`max-width:48rem` 居中；完成后恢复左右分栏（`:has()` 方案） |
+| LLM 加固 | `_chat`（网络/5xx/429 重试 1 次）；`_chat_json`（JSON 格式异常重新生成 1 次）——长视频 map-reduce 偶发 502 归零 |
+
 ## 五、关键决策与坑（开发时避免重踩）
 
 合并原 OVERVIEW/PLAN 的坑，去重后保留下述高价值项：
@@ -94,6 +116,10 @@
 | 14 | 平台强反爬 | X/Instagram/TikTok 多数**预期失败**（需 cookies/JS 签名）；YouTube 部分需登录；都返回友好中文错误而非 500 |
 | 15 | **mermaid 输出 svg 的 viewBox 会双倍缩小**（v0.2.9 真 BUG） | mermaid v11 mindmap 的 `<svg>` 自带 `viewBox`（如 `3 3 1592 585`）。若保留它且设 `width/height=100%`，浏览器会**自动**按 viewBox 整树缩进容器（≈0.43），随后 `fitView` 又按 `getBBox()`（用户单位）对容器像素再算一次 → 有效 ≈**0.17** → 图被压成一团。**修法**：把 svg **归一为「1 用户单位=1 像素」**——`viewBox` 收敛到内容 bbox（含折叠徽标，留边距）、宽高设内容像素尺寸、容器加 `overflow:hidden`；如此 `fitView` 的 scale 才是单次正确应用，且滚轮缩放/拖拽平移坐标（按像素）从「近似」变回**精确**。反过来，若某处又要 svg 自适应容器（不缩放平移），则应**去掉** `width/height=100%` 而用 fitView 统一控 scale |
 | 16 | **SSE 要及时 = 首帧就要「流在动」**（v0.2.9） | 流式「及时性」不只是 `_chat_stream` 逐 token——生成前的冷路径（字幕抽取+上下文构建）若在流外，首帧前会静默等待（观感像「等全生成完才吐」）。修法：把冷路径**挪进 `event_stream`**，流一建立即推 `{"status":"preparing"}`、可再推 `{"status":"generating"}`，前端据此把占位符切为文案；并给响应加 `X-Accel-Buffering: no`/`Cache-Control: no-cache` 防 nginx 等反代缓冲到收尾一次吐出。⚠️ 流式端点**不能**用非流式异常码拆错误（如 502），因为服务端无法预知流式进行中的中间成败，宜以流内 `error` 帧终止（HTTP 200） |
+| 17 | **`hidden` 属性会被 `display` 类覆盖**（v0.4.1） | `#analyze` 改 `lg:flex` 后，UA 默认 `[hidden]{display:none}` 被 class 的 `display:flex` 覆盖 → 解析前右栏直接显示。修法：`#analyze[hidden]{display:none!important}`；任何带 display 类的显隐面板都要补 `.x.hidden{display:none}`（如 `#panelAsk.hidden` 等） |
+| 18 | **`height:100%` + margin 溢出 → 双滚动条**（v0.4.1） | 面板撑满用 `height:100%` 时若残留 `mt-4`，内容会溢出 `#anBody` 16px → 内外同时出现滚动条（主人截图「2 个拖动条」）。修法：桌面媒体查询里统一 `margin-top: 0`；「撑满+内部滚动」三件套 = `flex/height:100%` + 内容区 `flex:1 min-h-0 overflow-y-auto` 的 `min-h-0` 不可省（否则 flex 子项不收缩、滚动失效） |
+| 19 | **LLM 偶发 502：map-reduce 任一路失败整点 502**（v0.4.1） | 长视频摘要/章节/导图 = 多路并发 LLM 调用，任一路 网络抖动/5xx/JSON 格式异常 → 整个端点 502（e2e 连跑 24h 内观察 3 次，前端已友好降级但 console 报错）。修法：`_chat` 对 超时/连接/429/5xx 重试 1 次（401/400 不重试）；`_chat_json` 对「格式异常」**重新生成 1 次**（`_chat` 网络重试覆盖不到解析失败） |
+| 20 | **等高 + 内部滚动要用「内容面板撑满」而非「内容区滚动」**（v0.4.1） | 若直接让 `#anBody` 滚动而面板内容只占自然高度，面板下方会露出大片空白（主人反馈多次：字幕/问答下方「空白太多」）。正确姿势：右栏 `flex-col`，头部 `shrink-0` 固定，面板 `height:100%; margin-top:0` 撑满，面板内**内容区**（subText/askOutput/sumMd/sumChapters）`flex-1 min-h-0 overflow-y-auto` → 无空白、单滚动条、头部固定三者兼得 |
 
 ## 六、已知限制（v1 有意为之）
 
@@ -153,6 +179,22 @@
 - [x] **根因**：`summarize` 以**字符预算** `ai_single_shot_chars` 判长短视频；**口述访谈**每分钟字数少，60+ 分钟整段也能 <30000 字 → 被误判为「短视频」走单次直出，并**合成一条覆盖整片时长的伪章节**（标题=主题、摘要=总览）。章节粒度本质由**时长**决定，字符判据是错误信号。
 - [x] **修复**：新增 `_should_split(segments)`（`时长≥600s 或 字符≥30000` 任一触发即分块）；`summarize`/`mindmap` 判据改用之；短视频单次直出**不再合成伪章节**（`chapters=[]`）；`_markdown` **一律纯叙述**（主题+总览+要点+关键词），长短皆**不输出 `## 章节`/时间戳**——时间轴由独立「章节·时间轴」面板承载（主人确认：摘要模块不应有时间轴）；`derive_mindmap` 无章节时回退 `根→要点`。
 - ✅ 验证：mock 62min 稀疏访谈 → 7 个 ~10 分钟真实章节（00:00–09:54 / 10:04–19:58 …），不再是单条 `[00:00-01:02:52]`；`_markdown` 长短皆纯叙述、无 `## 章节`/时间戳；`summarize` 全链路（桩 LLM）+ `e2e_features.py` mock 回归全绿、无控制台报错。
+
+### M2.5 布局与自动摘要（v0.4.0，已实现 + 回归）
+> 主人反馈（截图）：视频信息（下载）与总结上下两板块，页面纵向过长、无法一屏同览。
+- [x] **左右分栏同屏**：`#resultPanel` 改 `grid lg:grid-cols-12`，左=视频信息(+`description`)+清晰度+下载，右=AI 功能 Tab（摘要默认激活）；<lg 上下堆叠。
+- [x] **AI 功能 Tab 栏**：按钮宫格 → `#aiTabs` 胶囊 Tab（摘要/章节·时间轴/思维导图/字幕/问答，ID 复用，e2e 断言零破坏）。
+- [x] **解析后自动摘要**：`#autoSumToggle` 开关（默认关，localStorage `vdl_auto_summary`）；开启后解析成功自动调 `/api/ai/summary`（缓存命中直接渲染）；`handleSummary` 加换链接竞态守卫。
+- [x] `/api/parse` 新增 `description`（≤800 字符）；`e2e_test.py`/`e2e_features.py` 增断言与自动摘要场景，全绿、无控制台报错。
+
+### M2.6 验收反馈修复（v0.4.1，已实现 + 回归）
+> 主人验收 v0.4.0 时逐条反馈（截图标注）的体验问题，已全部修复并回归。
+- [x] **顶部导航遮挡**→ `scroll-margin-top:5rem`；**右栏标题溢出**→ `block truncate` + `title` 悬停；**封面空白/竖长**→ `max-h-32` + 标题 3 行省略；**Tab 默认激活**→ 默认无选中 + `#anEmpty` 空态 + 删除说明段。
+- [x] **左右等高 + 内部滚动 + 头部固定**：grid stretch 等高；右栏 `flex-col`，头部 `shrink-0`，`#anBody flex-1 min-h-0 overflow-y-auto`。
+- [x] **面板下方空白 / 双滚动条**：问答/字幕/摘要/章节 撑满 + 内容区单滚动条（`margin-top:0` 防溢出）。
+- [x] **首次解析居中**：`:has()` 方案，解析中 768px 居中，完成后恢复分栏。
+- [x] **LLM 偶发 502**：`_chat` 重试 1 次 + `_chat_json` 格式异常重生成 1 次。
+- ✅ 回归：`e2e_features.py` / `e2e_test.py` 全绿无 console 错误；探针：居中/等高/固定/单滚动条/封面/标题 全过。
 
 ### M3 待办
 - [ ] 部署：反代 + HTTPS + ICP 备案

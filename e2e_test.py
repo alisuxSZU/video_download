@@ -18,7 +18,7 @@ from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
-BASE = "http://127.0.0.1:8011"
+BASE = __import__("os").environ.get("E2E_BASE", "http://127.0.0.1:8011")
 VIDEO_URL = "https://www.youtube.com/watch?v=UISJGnJ1LpA"
 SHOTS = Path("d:/LCP_agent/video_download/screenshots")
 SHOTS.mkdir(parents=True, exist_ok=True)
@@ -132,12 +132,65 @@ def run():
         for bid in ["subDl", "chaptersDownload", "askExport", "sumDownload", "mmDownload"]:
             assert page.locator(f"#{bid}").count() == 1, f"{bid} 按钮缺失"
 
+        # ---- 2e. 左右分栏（v0.4.0）：Tab 栏默认「摘要」+ 视频描述 + 自动摘要默认关 ----
+        tabs = page.evaluate("Array.from(document.querySelectorAll('#aiTabs .ai-tab')).map(b => b.id)")
+        print(f"[check] AI Tab 栏 = {tabs}")
+        assert tabs == ["sumBtn", "chaptersBtn", "mindmapBtn", "subBtn", "askOpenBtn"], f"Tab 栏异常: {tabs}"
+        n_active = page.evaluate("document.querySelectorAll('#aiTabs .ai-tab-active').length")
+        n_panel_shown = page.evaluate("document.querySelectorAll('.an-panel:not(.hidden)').length")
+        empty_visible = page.evaluate("!document.querySelector('#anEmpty').classList.contains('hidden')")
+        print(f"[check] 默认激活 Tab 数 = {n_active}（应为 0，等待用户点击）| 可见面板数 = {n_panel_shown} | 空态占位 = {empty_visible}")
+        assert n_active == 0, "默认不应有任何 Tab 处于激活（被点击）态"
+        assert n_panel_shown == 0, "默认不应显示任何功能面板"
+        assert empty_visible is True, "默认应显示空态占位（点击标签后生成）"
+        # 左右等高 + 右栏内容区（#anBody）超高可内部滚动
+        layout = page.evaluate("""() => {
+          const left = document.querySelector('#resultPanel > div > div:first-child');
+          const right = document.querySelector('#analyze');
+          const body = document.querySelector('#anBody');
+          return { lh: left.offsetHeight, rh: right.offsetHeight,
+                   bodyOverflow: getComputedStyle(body).overflowY };
+        }""")
+        print(f"[check] 左右等高 = {layout}")
+        assert abs(layout["lh"] - layout["rh"]) <= 2, f"左右卡片应等高: {layout}"
+        assert layout["bodyOverflow"] in ("auto", "scroll"), f"右栏内容区超高时应内部滚动: {layout}"
+        desc_txt = page.inner_text("#dlDescText")
+        n_sum_auto = req_count.get("/api/ai/summary", 0)
+        auto_on = page.evaluate("document.querySelector('#autoSumToggle').checked")
+        print(f"[check] 视频描述前80 = {desc_txt[:80]!r} | 解析后 summary 自动请求数 = {n_sum_auto} | autoSumToggle = {auto_on}")
+        assert desc_txt.strip() != "", "视频描述未展示（/api/parse 应返回 description）"
+        assert n_sum_auto == 0, "自动摘要默认关闭时，解析后不应自动请求 summary"
+        assert auto_on is False, "自动摘要开关默认应为关闭"
+
         # ---- 3. 逐项触发 5 个功能 ----
         for btn_id in ["subBtn", "sumBtn", "chaptersBtn", "mindmapBtn", "askOpenBtn"]:
             page.click(f"#{btn_id}")
             page.wait_for_timeout(600)
             print(f"[check] {btn_id}: {panel_ok(page, btn_id)}")
             page.screenshot(path=str(SHOTS / f"e2e_{btn_id}.png"), full_page=True)
+
+        # ---- 3b. 右栏「标题+Tab」固定 + 面板内容超高时面板内部滚动（无第二滚动条） ----
+        page.click("#chaptersBtn")  # 切到章节面板（长内容），再测布局
+        wait_busy_done(page)
+        page.locator("#sumChapters > *").first.wait_for(timeout=30000)
+        scroll_info = page.evaluate("""() => {
+          const list = document.querySelector('#sumChapters');
+          const body = document.querySelector('#anBody');
+          return { listOverflow: getComputedStyle(list).overflowY,
+                   listSh: list.scrollHeight, listCh: list.clientHeight,
+                   bodySh: body.scrollHeight, bodyCh: body.clientHeight };
+        }""")
+        print(f"[check] 章节内部滚动 = {scroll_info}")
+        assert scroll_info["listOverflow"] in ("auto", "scroll"), "章节内容超高应在面板内部滚动"
+        assert scroll_info["listSh"] > scroll_info["listCh"], "章节内容超高时应可内部滚动"
+        assert scroll_info["bodySh"] <= scroll_info["bodyCh"] + 1, "内容区不应出现第二个滚动条"
+        # 滚动章节列表时，标题+Tab 固定不动
+        before_top = page.evaluate("document.querySelector('#anTitle').getBoundingClientRect().top")
+        page.evaluate("document.querySelector('#sumChapters').scrollTop = 400")
+        page.wait_for_timeout(300)
+        after_top = page.evaluate("document.querySelector('#anTitle').getBoundingClientRect().top")
+        print(f"[check] 右栏标题固定: {before_top:.1f} -> {after_top:.1f}")
+        assert abs(after_top - before_top) < 3, "右栏标题不应随内容滚动"
 
         # ---- 4. 缓存：再次点击同一功能不重发请求；「重新生成」才重算 ----
         s0 = req_count.get(FEATURE_ENDPOINTS["sumBtn"], 0)

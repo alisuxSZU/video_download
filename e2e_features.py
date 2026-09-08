@@ -27,6 +27,7 @@ BAD_KEYS = ("favicon", "Failed to load resource", "ERR_", "404", "net::")
 PARSE_BODY = {
     "ok": True, "title": "Mock 视频", "thumbnail": None, "duration": 600,
     "extractor": "Generic", "webpage_url": FAKE_URL, "ffmpeg": True,
+    "description": "Mock 视频描述：这是一个用于端到端测试的描述文本。",
     "formats": [{
         "format_id": "22", "ext": "mp4", "resolution": "720p", "height": 720,
         "fps": 30, "vcodec": "avc1", "acodec": "mp4a", "filesize": 123,
@@ -94,12 +95,14 @@ def wait_busy(page, ms=20000):
 
 def run():
     console_errors = []
+    api_requests = []  # 记录 /api/* 请求（供自动摘要「无需点击即请求」断言）
 
     with sync_playwright() as p:
         browser = p.chromium.launch(channel="chrome", headless=True)
         page = browser.new_page(viewport={"width": 1440, "height": 1000})
         page.on("console", lambda m: console_errors.append(m.text) if m.type == "error" else None)
         page.on("pageerror", lambda e: console_errors.append(f"PAGEERROR: {e}"))
+        page.on("request", lambda r: api_requests.append(r.url) if "/api/" in r.url else None)
         install_mocks(page)
 
         page.goto(BASE, wait_until="networkidle")
@@ -117,6 +120,56 @@ def run():
         page.wait_for_selector("#dlTitle:not(:has-text('解析中'))", timeout=20000)
         page.wait_for_timeout(600)
         assert page.evaluate("document.querySelector('#analyze').hidden") is False, "解析后模块未显示"
+
+        # 2b) 左右分栏（v0.4.0）：Tab 栏 + 视频描述 + 自动摘要默认关
+        tabs = page.evaluate("Array.from(document.querySelectorAll('#aiTabs .ai-tab')).map(b => b.id)")
+        print(f"[check] AI Tab 栏 = {tabs}")
+        assert tabs == ["sumBtn", "chaptersBtn", "mindmapBtn", "subBtn", "askOpenBtn"], f"Tab 栏异常: {tabs}"
+        n_active0 = page.evaluate("document.querySelectorAll('#aiTabs .ai-tab-active').length")
+        n_panel0 = page.evaluate("document.querySelectorAll('.an-panel:not(.hidden)').length")
+        empty0 = page.evaluate("!document.querySelector('#anEmpty').classList.contains('hidden')")
+        print(f"[check] 默认激活 Tab 数 = {n_active0}（应为 0）| 可见面板数 = {n_panel0} | 空态占位 = {empty0}")
+        assert n_active0 == 0, "默认不应有任何 Tab 处于激活（被点击）态"
+        assert n_panel0 == 0, "默认不应显示任何功能面板"
+        assert empty0 is True, "默认应显示空态占位（点击标签后生成）"
+        # 左右等高 + 右栏内容区（#anBody）超高可内部滚动
+        layout0 = page.evaluate("""() => {
+          const left = document.querySelector('#resultPanel > div > div:first-child');
+          const right = document.querySelector('#analyze');
+          const body = document.querySelector('#anBody');
+          return { lh: left.offsetHeight, rh: right.offsetHeight,
+                   bodyOverflow: getComputedStyle(body).overflowY };
+        }""")
+        print(f"[check] 左右等高 = {layout0}")
+        assert abs(layout0["lh"] - layout0["rh"]) <= 2, f"左右卡片应等高: {layout0}"
+        assert layout0["bodyOverflow"] in ("auto", "scroll"), f"右栏内容区超高时应内部滚动: {layout0}"
+        desc = page.inner_text("#dlDescText")
+        print(f"[check] 视频描述 = {desc!r}")
+        assert desc == PARSE_BODY["description"], f"视频描述未展示: {desc!r}"
+        auto_on0 = page.evaluate("document.querySelector('#autoSumToggle').checked")
+        n_sum0 = sum(1 for u in api_requests if u.endswith("/api/ai/summary"))
+        print(f"[check] 默认自动摘要关：autoSumToggle={auto_on0} summary 请求数={n_sum0}")
+        assert auto_on0 is False, "自动摘要开关默认应关闭"
+        assert n_sum0 == 0, "默认关闭时解析后不应自动请求 summary"
+
+        # 2c) 开启「解析后自动生成摘要」→ 重新解析 → 摘要应自动请求并渲染（无需点击）
+        page.check("#autoSumToggle")
+        page.click("#parseBtn")
+        page.wait_for_selector("#dlTitle:not(:has-text('解析中'))", timeout=20000)
+        wait_busy(page)
+        assert page.evaluate("document.querySelector('#autoSumToggle').checked") is True
+        assert page.evaluate("localStorage.getItem('vdl_auto_summary')") == "1", "开关未持久化到 localStorage"
+        n_sum1 = sum(1 for u in api_requests if u.endswith("/api/ai/summary"))
+        auto_sum = page.inner_text("#sumMd").strip()
+        print(f"[check] 开启自动摘要后：summary 请求数={n_sum1} 摘要内容={auto_sum[:40]!r}")
+        assert n_sum1 == 1, f"开启后解析应恰好自动请求 1 次 summary（实际 {n_sum1}）"
+        assert len(auto_sum) > 5, "开启自动摘要后解析未自动生成摘要"
+        # 再点「摘要」Tab：应命中缓存，不重复请求
+        page.click("#sumBtn")
+        page.wait_for_timeout(500)
+        n_sum2 = sum(1 for u in api_requests if u.endswith("/api/ai/summary"))
+        print(f"[check] 再点摘要 Tab 请求数 = {n_sum2}")
+        assert n_sum2 == 1, f"点摘要 Tab 应命中缓存不重发（实际 {n_sum2}）"
 
         # 3) 提取原字幕（合并后的「🎬 字幕」按钮 → 原字幕视图；无目标语言）
         page.click("#subBtn")

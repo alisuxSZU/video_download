@@ -252,8 +252,11 @@ def _build_payload(info: dict) -> dict:
             if f.get("thumbnail") and not str(f["thumbnail"]).startswith("data:"):
                 thumbnail = f["thumbnail"]
                 break
+    # 视频描述：压缩空白后截断（前端左栏展示；无描述返回空串，不报错）
+    description = re.sub(r"\s+", " ", info.get("description") or "").strip()[:800]
     return {
         "title": info.get("title") or "未命名视频",
+        "description": description,
         "thumbnail": thumbnail,
         "duration": info.get("duration") or 0,
         "extractor": info.get("extractor_key") or "",

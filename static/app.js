@@ -105,6 +105,7 @@
       renderResult(data);
       showAnalyze(true); // 视频解析成功后才显示「字幕提取·AI分析」模块
       syncAnalyze(); // 解析成功后自动带入统一分析模块
+      maybeAutoSummary(url); // 若开启「解析后自动生成摘要」→ 无需再点一次
     } catch (e) {
       resetAnalyze(); // 解析失败同样清理，避免旧内容被残留
       showAnalyze(false); // 整块隐藏并清空上次状态，避免对旧视频误操作
@@ -115,9 +116,12 @@
 
   function renderResult(data) {
     $("#dlTitle").textContent = data.title || "未命名视频";
+    // 标题最多 3 行显示；完整标题写入 title 属性，鼠标悬停可见
+    $("#dlTitle").title = data.title || "";
     $("#dlMeta").textContent = `${data.extractor || "通用视频"} · ${humanSec(data.duration) || "未知时长"}`;
     const extBadges = { ArchiveOrg: "Archive 视频", YouTube: "YouTube", BiliBili: "哔哩哔哩", TikTok: "TikTok", Generic: "通用视频" };
     $("#extBadge").textContent = extBadges[data.extractor] || "通用视频";
+    renderDesc(data.description); // 左栏视频描述（后端 /api/parse 新增字段）
 
     if (data.thumbnail) {
       const t = $("#thumb");
@@ -136,6 +140,20 @@
     } else {
       fmts.forEach((f, i) => { if (i === 0) current.selected = f.format_id; list.appendChild(formatRow(f, i === 0)); });
     }
+  }
+
+  // 左栏视频描述：textContent 渲染（防注入），空则隐藏；>120 字提供「展开/收起」
+  function renderDesc(text) {
+    const wrap = $("#dlDesc"), body = $("#dlDescText"), btn = $("#dlDescToggle");
+    if (!wrap || !body || !btn) return;
+    const t = (text || "").replace(/\s+/g, " ").trim();
+    if (!t) { wrap.classList.add("hidden"); return; }
+    body.textContent = t;
+    body.classList.remove("open");
+    wrap.classList.remove("hidden");
+    const long = t.length > 120;
+    btn.classList.toggle("hidden", !long);
+    btn.textContent = "展开";
   }
 
   function formatRow(f, checked) {
@@ -343,7 +361,7 @@
     const url = activeUrl();
     if (!url) { toast("请先解析视频链接"); return; }
     hideError();
-    showPanel("panelSub");
+    selectTab("subBtn");
     const targetLang = translate ? ($("#subLangSel").value || "简体中文") : "";
     const key = translate ? "subTranslate:" + targetLang : "subtitle";
     const c = getCache(url, key);
@@ -389,6 +407,14 @@
     const el = $("#" + name);
     if (el) { el.classList.remove("hidden"); el.scrollIntoView({ behavior: "smooth", block: "nearest" }); }
   }
+  // Tab 按钮 id → 面板 id；selectTab 负责高亮 + 显隐（默认「摘要」）
+  const TAB_PANEL = { sumBtn: "panelSum", chaptersBtn: "panelChap", mindmapBtn: "panelMind", subBtn: "panelSub", askOpenBtn: "panelAsk" };
+  function selectTab(btnId) {
+    $$(".ai-tab").forEach((b) => b.classList.toggle("ai-tab-active", b.id === btnId));
+    const empty = $("#anEmpty");
+    if (empty) empty.classList.add("hidden"); // 选中功能后隐藏空态占位
+    showPanel(TAB_PANEL[btnId]);
+  }
   const AN_BTNS = ["subBtn", "subTranslateBtn", "sumBtn", "chaptersBtn", "mindmapBtn", "askBtn"];
   function setAnBtns(disabled) {
     AN_BTNS.forEach((id) => { const el = $("#" + id); if (el) el.disabled = disabled; });
@@ -431,6 +457,25 @@
     }
   }
 
+  // ---------- 自动摘要：开关默认关（localStorage 持久化），开启后解析成功即自动生成 ----------
+  const AUTO_SUM_KEY = "vdl_auto_summary";
+  function autoSummaryOn() {
+    try { return localStorage.getItem(AUTO_SUM_KEY) === "1"; } catch (_) { return false; }
+  }
+  function setAutoSummary(on) {
+    try { localStorage.setItem(AUTO_SUM_KEY, on ? "1" : "0"); } catch (_) {}
+  }
+  // 解析成功后调用：开关开 + 当前无 AI 任务在跑 → 命中缓存直接渲染，否则自动调 /api/ai/summary
+  async function maybeAutoSummary(url) {
+    if (!url || !autoSummaryOn()) return;
+    const loading = $("#anLoading");
+    if (loading && !loading.classList.contains("hidden")) return; // 已有任务在跑，跳过本次自动
+    selectTab("sumBtn");
+    const c = getCache(url, "summary");
+    if (c && c.data) { renderSummary(c.data); lastSummary = c.summary || ""; return; }
+    await handleSummary();
+  }
+
   // 换链接后：把 AI 模块里的可见内容与跨链接的临时状态全部清理，避免看到上一个视频的产物。
   // 注意：不删 featureCache（缓存按 url 分键），切回旧链接仍能命中缓存恢复。
   function resetAnalyze() {
@@ -442,6 +487,9 @@
     mmTree = null;
     mmFitted = false;
     $$(".an-panel").forEach((p) => p.classList.add("hidden"));
+    $$(".ai-tab").forEach((b) => b.classList.remove("ai-tab-active")); // 换链接/失败后回到「未选中」态
+    const empty = $("#anEmpty");
+    if (empty) empty.classList.remove("hidden"); // 恢复空态占位
     hideError();
     $("#anLoading").classList.add("hidden");
     setAnBtns(false);
@@ -601,6 +649,10 @@
     svg.appendChild(vp);
 
     // 给每个节点标注 path + 有子节点时添加 折叠/展开 徽标，并绑定点击
+    // ⚠️ 徽标若留在节点组内，会被后绘制的兄弟节点（叶子路径）盖住而点不到（e2e 实测首个徽标被拦截）。
+    // 解法：包一层与节点相同 transform 的顶层 <g>、最后统一追加到 svg 末尾 → 永远绘制在最上层；
+    // 点击直接绑在徽标上（不再依赖向节点组冒泡，避免与节点点击双重触发）。
+    const foldHolders = [];
     svg.querySelectorAll("g.node").forEach((g) => {
       const labelEl = g.querySelector(".label");
       const label = labelEl ? labelEl.textContent.trim() : "";
@@ -620,13 +672,23 @@
         badge.textContent = mmCollapsed.has(info.path) ? "+" : "−";
         badge.style.fill = "#64748b";
         badge.style.cursor = "pointer";
-        g.appendChild(badge);
+        const holder = document.createElementNS(MM_NS, "g");
+        const t = g.getAttribute("transform");
+        if (t) holder.setAttribute("transform", t);
+        holder.appendChild(badge);
+        foldHolders.push(holder);
+        badge.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          if (mmDragMoved) return; // 刚拖拽完，不算点击
+          toggleFold(info.path);
+        });
       }
       g.addEventListener("click", () => {
         if (mmDragMoved) return; // 刚拖拽完，不算点击
         if (g.dataset.mmHasChildren === "1") toggleFold(g.dataset.mmPath);
       });
     });
+    foldHolders.forEach((h) => vp.appendChild(h)); // 全部徽标最后绘制（仍在 #mmViewport 内，随平移缩放），保证可点
 
     // ⚠️ mermaid 输出的 svg 自带 viewBox（如 "3 3 1592 585"）。若保留它并设 width/height=100%，
     // 浏览器会**自动**把整棵树按 viewBox 缩放进容器（对 1568px 宽的树 ≈0.43 倍），随后 fitView 再按
@@ -855,7 +917,7 @@
     const url = activeUrl();
     if (!url) { toast("请先解析视频链接"); return; }
     hideError();
-    showPanel("panelSum");
+    selectTab("sumBtn");
     const c = getCache(url, "summary");
     if (c && !force) { renderSummary(c.data); lastSummary = c.summary; return; } // 命中缓存而不再请求
     $("#sumMd").innerHTML = skelHTML(4); // 骨架屏占位，替代冗余的「生成中…」句子
@@ -863,19 +925,24 @@
     askHistory = [];
     try {
       const d = await api("/api/ai/summary", { url });
+      // 竞态守卫：请求期间换链接则丢弃旧结果（界面已由 resetAnalyze 清理）
+      if (activeUrl() !== url) return;
       renderSummary(d);
       lastSummary = (d.summary || "").trim() ? d.summary : lastSummary;
       setCache(url, "summary", { data: d, summary: lastSummary });
       stopBusy();
       toast("摘要已生成");
-    } catch (e) { stopBusy(); showError(e.message); }
+    } catch (e) {
+      if (activeUrl() !== url) return;
+      stopBusy(); showError(e.message);
+    }
   }
 
   async function handleChapters(force) {
     const url = activeUrl();
     if (!url) { toast("请先解析视频链接"); return; }
     hideError();
-    showPanel("panelChap");
+    selectTab("chaptersBtn");
     const c = getCache(url, "chapters");
     if (c && !force) { renderChapters(c.chapters || []); return; } // 命中缓存而不再请求
     $("#sumChapters").innerHTML = skelHTML(3); // 骨架屏占位，替代冗余的「生成章节时间轴中…」句子
@@ -893,7 +960,7 @@
     const url = activeUrl();
     if (!url) { toast("请先解析视频链接"); return; }
     hideError();
-    showPanel("panelMind");
+    selectTab("mindmapBtn");
     const c = getCache(url, "mindmap");
     if (c && !force) { // 命中缓存而不再请求
       mmCollapsed.clear(); mmFitted = false;
@@ -1024,7 +1091,7 @@
     if (!url) { toast("请先解析视频链接"); return; }
     if (!q) { toast("请输入问题"); return; }
     $("#askInput").value = ""; // 发送后清空输入框（问题已进气泡/历史，不再残留）
-    showPanel("panelAsk");
+    selectTab("askOpenBtn");
     const out = $("#askOutput");
     const myGen = ++askGen;   // 本轮的会话令牌：被清空/换链接（askGen 再 ++）后即失效
     askAbort = new AbortController();
@@ -1141,7 +1208,7 @@
   $("#sumBtn").onclick = () => handleSummary();      // 不能直接绑定 handleSummary：onclick 会把事件对象当 force 传入导致永远重算
   $("#chaptersBtn").onclick = () => handleChapters();
   $("#mindmapBtn").onclick = () => handleMindmap();
-  $("#askOpenBtn").onclick = () => { hideError(); showPanel("panelAsk"); $("#askInput").focus(); };
+  $("#askOpenBtn").onclick = () => { hideError(); selectTab("askOpenBtn"); $("#askInput").focus(); };
   $("#sumCopy").onclick = () => { if (lastSummary) navigator.clipboard.writeText(lastSummary).then(() => toast("摘要已复制")); else toast("请先生成摘要"); };
   $("#sumDownload").onclick = downloadMarkdown;
   $("#askBtn").onclick = handleAsk;
@@ -1180,11 +1247,20 @@
   $("#proModal").addEventListener("click", (e) => { if (e.target.id === "proModal") closePro(); });
   document.addEventListener("keydown", (e) => { if (e.key === "Escape") closePro(); });
 
+  // 自动摘要开关（默认关，localStorage 持久化）+ 视频描述展开/收起
+  $("#autoSumToggle").checked = autoSummaryOn();
+  $("#autoSumToggle").onchange = (e) => setAutoSummary(e.target.checked);
+  $("#dlDescToggle").onclick = () => {
+    const body = $("#dlDescText"), btn = $("#dlDescToggle");
+    const open = body.classList.toggle("open");
+    btn.textContent = open ? "收起" : "展开";
+  };
+
   // 自动扩容 textarea
   const ta = $("#urlInput");
   ta.addEventListener("input", () => { ta.style.height = "auto"; ta.style.height = Math.min(ta.scrollHeight, 200) + "px"; });
 
-  window.__vdl = { current, startPoll, stopPoll };
+  window.__vdl = { current, startPoll, stopPoll, autoSummary: autoSummaryOn, setAutoSummary };
   // 测试/调试钩子：暴露思维导图的折叠与视图状态（供 e2e 归因断言）
   window.__mm = {
     get collapsed() { return Array.from(mmCollapsed); },

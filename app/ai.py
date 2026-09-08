@@ -50,22 +50,37 @@ async def _chat(messages: list[dict]) -> str:
         "temperature": 0.3,
     }
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-    try:
-        async with httpx.AsyncClient(timeout=settings.ai_timeout_seconds) as client:
-            resp = await client.post(url, json=payload, headers=headers)
-    except httpx.TimeoutException as exc:
-        raise LLMError("AI 请求超时，请稍后再试") from exc
-    except httpx.HTTPError as exc:
-        raise LLMError("AI 服务暂时不可用，请稍后再试") from exc
+    # 自动重试一次：LLM 端偶发 5xx / 429 / 网络抖动会让长视频 map-reduce 其中一路失败
+    # 导致整个摘要/章节/导图端点 502。仅对可重试错误重试；401/400 等确定性错误直接失败。
+    last: LLMError | None = None
+    for attempt in range(2):
+        retryable = False
+        resp = None
+        try:
+            async with httpx.AsyncClient(timeout=settings.ai_timeout_seconds) as client:
+                resp = await client.post(url, json=payload, headers=headers)
+        except httpx.TimeoutException as exc:
+            last = LLMError("AI 请求超时，请稍后再试")
+            retryable = True
+        except httpx.HTTPError as exc:
+            last = LLMError("AI 服务暂时不可用，请稍后再试")
+            retryable = True
 
-    if resp.status_code != 200:
-        raise LLMError(_status_error(resp.status_code))
+        if resp is not None:
+            if resp.status_code == 200:
+                data = resp.json()
+                try:
+                    return data["choices"][0]["message"]["content"]
+                except (KeyError, IndexError, TypeError) as exc:
+                    raise LLMError("AI 返回格式异常，请稍后再试") from exc
+            last = LLMError(_status_error(resp.status_code))
+            retryable = resp.status_code == 429 or resp.status_code >= 500
 
-    data = resp.json()
-    try:
-        return data["choices"][0]["message"]["content"]
-    except (KeyError, IndexError, TypeError) as exc:
-        raise LLMError("AI 返回格式异常，请稍后再试") from exc
+        if attempt == 0 and retryable:
+            await asyncio.sleep(1.0)
+            continue
+        assert last is not None
+        raise last
 
 
 async def translate(text: str, target_lang: str) -> str:
@@ -199,9 +214,24 @@ def _parse_json(text: str) -> dict:
 
 
 async def _chat_json(messages: list[dict]) -> dict:
-    """调用 LLM 并解析出 JSON 对象。"""
-    text = await _chat(messages)
-    return _parse_json(text)
+    """调用 LLM 并解析出 JSON 对象。
+
+    解析失败（LLM 偶发给非严格 JSON）自动**重新生成一次**——长视频 map-reduce 多路
+    并发时某一路格式异常会让整个导图/章节端点 502（网络类错误已由 `_chat` 内部重试）。
+    """
+    last: LLMError | None = None
+    for attempt in range(2):
+        try:
+            text = await _chat(messages)
+            return _parse_json(text)
+        except LLMError as exc:
+            last = exc
+            if attempt == 0 and "格式异常" in str(exc):
+                await asyncio.sleep(1.0)
+                continue
+            raise
+    assert last is not None
+    raise last
 
 
 async def _chat_stream(messages: list[dict]) -> AsyncIterator[str]:
