@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI 视频总结怎么用 - 闪电下载 | 一键生成视频摘要/章节/思维导图教程</title>
+  <meta name="description" content="AI 视频总结怎么用？本教程详解如何用闪电下载一键生成长视频的结构化摘要、章节时间轴、思维导图，还能就视频内容AI提问：粘贴链接解析后点击摘要标签即可，支持B站、YouTube等平台，附使用技巧与常见问题。" />
+  <meta name="keywords" content="AI视频总结,视频摘要生成,视频章节时间轴,视频思维导图,长视频总结工具,视频内容提问" />
+  <meta name="robots" content="index, follow" />
+  <meta name="format-detection" content="telephone=no" />
+  <link rel="canonical" href="{{SITE_URL}}/guides/ai-video-summary" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>" />
+
+  <meta property="og:title" content="AI 视频总结怎么用？一键生成摘要/章节/思维导图" />
+  <meta property="og:description" content="粘贴链接即可生成结构化视频摘要、章节时间轴与思维导图，还能就视频内容提问，附使用教程。" />
+  <meta property="og:image" content="{{SITE_URL}}/static/og-image.jpg" />
+  <meta property="og:type" content="article" />
+  <meta property="og:url" content="{{SITE_URL}}/guides/ai-video-summary" />
+  <meta property="og:locale" content="zh_CN" />
+  <meta property="og:site_name" content="闪电下载" />
+  <meta name="twitter:card" content="summary_large_image" />
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "Article",
+        "headline": "AI 视频总结怎么用？一键生成视频摘要/章节/思维导图",
+        "description": "用闪电下载为长视频生成结构化摘要、章节时间轴、思维导图与AI问答的使用教程。",
+        "inLanguage": "zh-CN",
+        "datePublished": "2026-09-11",
+        "dateModified": "2026-09-11",
+        "author": { "@type": "Organization", "name": "闪电下载" },
+        "publisher": { "@type": "Organization", "name": "闪电下载", "logo": { "@type": "ImageObject", "url": "{{SITE_URL}}/static/og-image.jpg" } },
+        "mainEntityOfPage": "{{SITE_URL}}/guides/ai-video-summary"
+      },
+      {
+        "@type": "BreadcrumbList",
+        "itemListElement": [
+          { "@type": "ListItem", "position": 1, "name": "首页", "item": "{{SITE_URL}}/" },
+          { "@type": "ListItem", "position": 2, "name": "下载教程", "item": "{{SITE_URL}}/guides" },
+          { "@type": "ListItem", "position": 3, "name": "AI视频总结", "item": "{{SITE_URL}}/guides/ai-video-summary" }
+        ]
+      },
+      {
+        "@type": "FAQPage",
+        "mainEntity": [
+          { "@type": "Question", "name": "哪些视频可以生成AI总结？", "acceptedAnswer": { "@type": "Answer", "text": "只要视频有字幕（平台字幕或AI字幕）即可生成，支持B站、YouTube等平台。无字幕视频暂时无法总结。" } },
+          { "@type": "Question", "name": "生成AI总结需要付费吗？", "acceptedAnswer": { "@type": "Answer", "text": "注册即可免费试用，PRO会员享无限次AI摘要及更快速率。" } },
+          { "@type": "Question", "name": "总结结果准确吗？", "acceptedAnswer": { "@type": "Answer", "text": "总结基于视频原始字幕生成，并保留章节时间戳便于回看原片定位，但AI生成内容可能有误差，关键信息请以视频原文为准。" } }
+        ]
+      }
+    ]
+  }
+  </script>
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    function __applyTailwindConfig(){if(!window.tailwind)return;tailwind.config={theme:{extend:{colors:{brand:{DEFAULT:'#1777ff',dark:'#1666e6',soft:'#eaf2ff'}},fontFamily:{sans:['Inter','system-ui','sans-serif']}}}};}
+    if(window.tailwind)__applyTailwindConfig();else window.addEventListener('load',__applyTailwindConfig);
+  </script>
+  <link rel="stylesheet" href="/static/styles.css" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+</head>
+<body class="bg-white text-slate-900 antialiased">
+  <header class="sticky top-0 z-50 bg-white/80 backdrop-blur border-b border-slate-100">
+    <div class="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between">
+      <a href="/" class="flex items-center gap-2 font-extrabold text-lg tracking-tight">
+        <span class="inline-flex w-8 h-8 items-center justify-center rounded-lg bg-brand text-white text-sm shadow-sm">⚡</span>
+        <span>闪电下载<span class="text-brand">.</span></span>
+      </a>
+      <nav class="flex items-center gap-6 text-sm font-medium text-slate-500">
+        <a href="/#tool" class="hover:text-slate-900 transition">解析工具</a>
+        <a href="/guides" class="text-brand font-semibold">下载教程</a>
+        <a href="/#pricing" class="hover:text-slate-900 transition">定价</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="max-w-3xl mx-auto px-4 pt-10 pb-16">
+    <nav aria-label="面包屑" class="text-xs text-slate-400 mb-4">
+      <a href="/" class="hover:text-slate-600">首页</a><span class="mx-1">/</span>
+      <a href="/guides" class="hover:text-slate-600">下载教程</a><span class="mx-1">/</span>
+      <span class="text-slate-600">AI视频总结</span>
+    </nav>
+
+    <article>
+      <h1 class="text-3xl md:text-4xl font-black text-slate-900 leading-tight">AI 视频总结：一键生成摘要、章节时间轴与思维导图</h1>
+      <p class="mt-3 text-sm text-slate-400">更新于 2026-09-11 · 约 4 分钟读完</p>
+
+      <p class="mt-6 text-slate-600 leading-relaxed">
+        一小时的网课、播客、知识区视频没时间看完？<a href="/" class="text-brand underline">闪电下载</a>内置的 AI 总结功能，粘贴链接即可把长视频变成一份<strong>结构化学习笔记</strong>：核心观点摘要、约 10 分钟一节的章节时间轴、可交互的思维导图，还能直接就视频内容向 AI 提问。不同于只输出一段文字的普通工具，这里的每个结论都带时间戳，可回看原片定位。
+      </p>
+
+      <h2 class="mt-10 text-2xl font-black text-slate-900">使用步骤</h2>
+      <ol class="mt-4 space-y-4">
+        <li class="rounded-xl border border-slate-200 p-4">
+          <h3 class="font-bold text-slate-900"><span class="text-brand mr-1">1.</span> 粘贴链接解析视频</h3>
+          <p class="mt-1 text-sm text-slate-600 leading-relaxed">打开 <a href="/#tool" class="text-brand underline">闪电下载</a>，粘贴 B站 / YouTube 等平台视频链接，点「开始解析」。解析成功后页面右侧会出现 AI 功能面板。</p>
+        </li>
+        <li class="rounded-xl border border-slate-200 p-4">
+          <h3 class="font-bold text-slate-900"><span class="text-brand mr-1">2.</span> 点击「摘要」生成总结</h3>
+          <p class="mt-1 text-sm text-slate-600 leading-relaxed">默认进入摘要标签，点击生成后 AI 会输出：主题定位、内容总览、核心要点与关键词，以 Markdown 排版呈现，可一键复制或下载 <code class="bg-slate-100 rounded px-1">.md</code> 笔记。</p>
+        </li>
+        <li class="rounded-xl border border-slate-200 p-4">
+          <h3 class="font-bold text-slate-900"><span class="text-brand mr-1">3.</span> 章节 / 导图 / 问答按需取用</h3>
+          <p class="mt-1 text-sm text-slate-600 leading-relaxed">「章节·时间轴」按约 10 分钟一段切分全片并带时间戳；「思维导图」可视化全片结构，支持缩放、折叠与导出高清 PNG；「问答」以聊天方式就视频内容提问，AI 会给出具体时间段引用。</p>
+        </li>
+      </ol>
+
+      <h2 class="mt-10 text-2xl font-black text-slate-900">三个实用技巧</h2>
+      <ul class="mt-4 space-y-3 text-slate-600 leading-relaxed">
+        <li class="flex gap-2"><span class="text-brand font-bold">✔</span><span><strong>开启自动摘要</strong>：勾选输入框下的「解析后自动生成摘要」，每次解析成功即自动出结果，省一次点击。</span></li>
+        <li class="flex gap-2"><span class="text-brand font-bold">✔</span><span><strong>结果按链接缓存</strong>：同一视频的总结结果会保留，切换回旧链接不重算；点面板里的「⟳ 重新生成」才强制刷新。</span></li>
+        <li class="flex gap-2"><span class="text-brand font-bold">✔</span><span><strong>配合字幕食用</strong>：需要逐句核对？先用<a href="/guides/subtitle-extract-translate" class="text-brand underline">字幕提取</a>导出完整字稿，再对照总结阅读。</span></li>
+      </ul>
+
+      <h2 class="mt-10 text-2xl font-black text-slate-900">常见问题</h2>
+      <div class="mt-4 space-y-3">
+        <details class="rounded-xl border border-slate-200 p-4">
+          <summary class="cursor-pointer font-semibold text-slate-800">哪些视频可以生成 AI 总结？</summary>
+          <p class="mt-2 text-sm text-slate-500 leading-relaxed">只要视频带有字幕（平台人工字幕或 AI 字幕）即可总结，支持 B站、YouTube 等平台。无字幕视频暂时无法总结；B站部分视频的 AI 字幕需按弹窗提示提供登录态。</p>
+        </details>
+        <details class="rounded-xl border border-slate-200 p-4">
+          <summary class="cursor-pointer font-semibold text-slate-800">生成总结需要付费吗？</summary>
+          <p class="mt-2 text-sm text-slate-500 leading-relaxed">可免费试用；PRO 会员享无限次 AI 摘要与更高速率、优先排队。定价见<a href="/#pricing" class="text-brand underline">价格页</a>。</p>
+        </details>
+        <details class="rounded-xl border border-slate-200 p-4">
+          <summary class="cursor-pointer font-semibold text-slate-800">超长视频（几小时）也能处理吗？</summary>
+          <p class="mt-2 text-sm text-slate-500 leading-relaxed">可以。系统会自动把超长字幕分块处理再汇总成全片摘要与章节，几小时的讲座、播客也能稳定输出。</p>
+        </details>
+        <details class="rounded-xl border border-slate-200 p-4">
+          <summary class="cursor-pointer font-semibold text-slate-800">总结内容可信吗？</summary>
+          <p class="mt-2 text-sm text-slate-500 leading-relaxed">总结基于视频原始字幕生成，章节与问答均带时间戳便于核对原片。但 AI 生成内容可能有误差，关键信息请以视频原文为准。</p>
+        </details>
+      </div>
+
+      <div class="mt-10 rounded-2xl bg-brand-soft p-6 text-center">
+        <h2 class="font-bold text-slate-900">粘个链接，让 AI 帮你看完这条视频</h2>
+        <p class="mt-1 text-sm text-slate-600">摘要 / 章节 / 导图 / 问答，一次搞定。</p>
+        <a href="/#tool" class="mt-4 inline-block rounded-xl bg-brand text-white font-semibold px-6 py-3 text-sm hover:bg-brand-dark transition">立即生成视频总结</a>
+      </div>
+    </article>
+  </main>
+
+  <footer class="border-t border-slate-100 bg-slate-50/60">
+    <div class="max-w-6xl mx-auto px-4 py-10 text-center text-sm text-slate-400">
+      <p class="font-semibold text-slate-500">⚡ 闪电下载 · 全网视频一键存</p>
+      <nav class="mt-4 flex flex-wrap justify-center gap-x-5 gap-y-2" aria-label="相关教程">
+        <a href="/guides" class="hover:text-slate-600 transition">全部教程</a>
+        <a href="/guides/bilibili-video-download" class="hover:text-slate-600 transition">B站视频下载</a>
+        <a href="/guides/douyin-no-watermark-download" class="hover:text-slate-600 transition">抖音去水印</a>
+        <a href="/guides/subtitle-extract-translate" class="hover:text-slate-600 transition">字幕提取翻译</a>
+      </nav>
+      <p class="mt-4 mx-auto max-w-2xl leading-relaxed">
+        免责声明：本站下载内容仅供个人学习、研究及备份使用，请遵守原始平台的使用条款与版权法律法规，<b>严禁</b>用于侵权、转售或任何商业用途。因违规使用产生的一切后果由使用者自行承担。
+      </p>
+      <p class="mt-4">© 2026 闪电下载 · 沪ICP备XXXXXXXX号 · 联系方式：support@example.com</p>
+    </div>
+  </footer>
+</body>
+</html>

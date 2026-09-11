@@ -1,5 +1,38 @@
 # CHANGELOG — 按里程碑记录的实现进度与决策变更
 
+## [0.6.0] — SEO 搜索引擎优化：全站 TDK/结构化数据 + robots/sitemap + /guides 教程内容页（2026-09-11）
+
+> 目标：让用户在百度/Google/必应/360/搜狗等搜索引擎优先看到闪电下载。按团队《SEO优化工作流》规范实施，纯增量扩展，零现有功能改动。范围经人工确认：仅首页 + 新增 4 篇教程内容页；无生产域名 → `SITE_BASE_URL` 环境变量方案；国内 + Google 双目标。
+
+### Added / 首页 SEO（`static/index.html`）
+- **TDK 按三段式规范重写**：`视频下载 - 闪电下载 | 全网视频在线解析下载，无水印批量保存，支持B站抖音YouTube`（核心词前置适配百度 30 汉字展示）；Description ~105 字（覆盖功能/平台/卖点/CTA）；Keywords 10 个（百度/360/搜狗仍参考）。
+- **全套 meta**：`robots index,follow`、`canonical {{SITE_URL}}/`、`format-detection`、`X-UA-Compatible`、Open Graph 全套（og:title/description/image/type/url/locale/site_name）、Twitter Card（summary_large_image）。
+- **JSON-LD 结构化数据（@graph）**：`WebSite` + `Organization` + `WebApplication`（含 offers/featureList，**不虚构评分**）+ `FAQPage`（4 条与页面可见 FAQ 一一对应，不虚构内容）。
+- **内链体系**：导航加「下载教程」、页脚加 5 条教程内链（HTML sitemap 作用，权重导向内容页）。
+
+### Added / 教程内容页（新目录 `pages/`，不走 /static 挂载避免重复 URL）
+- `/guides` 列表页 + 4 篇详情：`/guides/bilibili-video-download`（B站视频下载）、`/guides/douyin-no-watermark-download`（抖音去水印）、`/guides/ai-video-summary`（AI 视频总结）、`/guides/subtitle-extract-translate`（字幕提取翻译）。
+- 每页均含：独立 TDK（详情页 = 内容标题 + 品牌词）、唯一 H1、正文 700+ 字、面包屑、FAQ details、Article + BreadcrumbList + FAQPage JSON-LD、互链 + 回首页工具区 CTA。
+- 内容与产品实况对齐（B站 AI 字幕需登录态/无字幕不可提取/版权内容不支持等如实说明），不承诺不存在的能力。
+
+### Added / 技术配置（`app/main.py` + `app/config.py`）
+- **`SITE_BASE_URL` 配置**（`app/config.py`）：生产域名单一事实来源；未配置时页面内 `{{SITE_URL}}` 渲染为空串 → canonical/og:url 退化为根相对路径（按当前域名解析，本地开发无碍，上线填 `.env` 即全站生效）。
+- **`GET /robots.txt`**：`User-agent: *` + `Disallow: /api/`（CSS/JS 不拦截）；配置域名后附 `Sitemap:` 行。
+- **`GET /sitemap.xml`**：首页 + /guides + 4 篇教程共 6 URL，含 lastmod/changefreq/priority；域名取 `SITE_BASE_URL`，未配置时退化为请求的 scheme+host。
+- **`GET /guides` / `GET /guides/{slug}`**：slug **白名单校验**（防路径穿越），未知 slug 返回 HTML 404 页（`pages/404.html`，noindex）；`GET /` 现同样做 `{{SITE_URL}}` 替换。
+- **og:image**：`static/og-image.jpg`（1200x630 品牌图：闪电图标 + 「闪电下载」+ 副标语；AI 生图 API 持续返回占位图，改用 Pillow 本地绘制一次性产出，脚本已删除；替换图片直接覆盖该文件即可）。
+
+### Verified
+- ✅ pytest 全量通过（mock 61 + 非 B站回归 23，SEO 改动不触及被测路径）。
+- ✅ 服务启动后实测：`/`（TDK/OG/JSON-LD/canonical 就位、`{{SITE_URL}}` 无残留）、`/robots.txt`、`/sitemap.xml`、`/guides`、4 篇教程页 200、未知 slug 404 + noindex。
+- ✅ 浏览器冒烟：首页解析/下载/AI 面板功能零回归、无 console 报错。
+
+### ⚠️ 上线后待办（M3 部署时）
+- `.env` 填 `SITE_BASE_URL=https://真实域名`。
+- 各搜索引擎站长平台提交 sitemap（Google Search Console / 百度搜索资源平台 / 必应 / 360 / 搜狗）。
+- 反代需转发 `X-Forwarded-Proto/Host`（sitemap 的域名退化逻辑依赖）。
+- 页脚 ICP 备案号与联系方式占位符替换为真实值。
+
 ## [0.5.0] — B站字幕直调官方 API：绕过 yt-dlp 稳定拿 AI 字幕 + 登录弹窗 + 脏数据防线（2026-09-11）
 
 > yt-dlp 对 B站 AI 字幕(`ai-zh`)支持不稳：部分视频(`need_login_subtitle=True`)无登录态时 yt-dlp 拿不到真实字幕 URL 只产出弹幕 XML；长视频 AI 字幕被分段时 yt-dlp 只拿到开头一小段。本期绕过 yt-dlp，直调 B站官方 Web 接口稳定获取完整字幕，并把 body 数组转成标准 srt，下游章节/问答零改动复用。竞品调研见 `docs/PLAN.md` M2.7。

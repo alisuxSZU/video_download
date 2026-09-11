@@ -20,6 +20,7 @@
 | M1.1 `v0.1.2` | 抖音下载（服务端无头浏览器） | ✅ |
 | M2 | 字幕提取/翻译 + AI 摘要 | ✅ 完成（已真实浏览器端到端回归）：学习型结构化摘要 v2（章节·时间轴/思维导图/SSE 问答）+ 前端四面板，逐功能命中 + 结果缓存 + 换链接清空 + 问答气泡聊天均已通过 e2e |
 | M2.7 `v0.5.0` | B站字幕直调官方 API + 前端粘贴 SESSDATA | ✅ 完成（mock 61 + 非 B站回归 23 + 真实 B站端到端：人工 zh 114 条 / AI zh 599 条 / summary 全链路 200，全绿） |
+| M2.8 `v0.6.0` | SEO 搜索引擎优化（TDK/结构化数据/robots/sitemap/教程内容页） | ✅ 完成（详见 CHANGELOG 0.6.0） |
 | M3 | 加固上线（反代/HTTPS/备案/回归） | ⬜ |
 
 > M2 已完成并通过端到端回归：`extract_subtitle`（翻译）、`/api/ai/summary`（v2 结构化，含章节时间轴 + 思维导图派生 + Markdown 全文）、`/api/ai/ask`（SSE 流式问答，前端气泡聊天）。`static/app.js` 的摘要面板已拆成「摘要 / 章节·时间轴 / 思维导图 / 问答」四个 tab，支持复制/下载 `.md`，并按 `url→feature` 缓存。**端到端验证**由仓库根 `e2e_test.py`（Playwright + 系统 Chrome，真实公网链接）回归。
@@ -212,6 +213,14 @@
 - [x] **选源优先级**：人工中文(zh/zh-Hans/zh-Hant) > AI 中文(ai-zh) > 英文(en) > 列表第一条（兼容用户 `req.lang` 指定）。
 - ✅ 验证：mock 单元测试 **61** 项（含脏数据拦截/跨语言不偷换/合格 AI 降级等新增回归）+ 非 B站回归 23 项 + 真实 B站端到端（人工 zh 114 条、AI zh 599 条、summary 全链路 200）+ 风控期脏数据拦截实测，全绿。测试脚本仅本地留存，不入仓。
 - ⚠️ **运维注意**：高频请求会触发 B站 IP 级风控（只下发残缺轨/URL 空/跨视频脏数据），冷却 30~60 分钟恢复；SESSDATA 对 nav 接口有效 ≠ 字幕接口不限流。
+
+### M2.8 SEO 搜索引擎优化（v0.6.0，已实现）
+> 目标：用户在百度/Google/必应/360/搜狗搜索「视频下载」「B站视频下载」「抖音去水印」等词时优先看到本站。按团队《SEO优化工作流》实施，纯增量、零功能改动。**已人工确认**：无生产域名 → `SITE_BASE_URL` 方案；国内 + Google 双目标；范围 = 首页 + 4 篇教程内容页。
+- [x] **首页 TDK/全套 meta**：三段式 Title（核心词前置）、~105 字 Description、10 个 Keywords、robots/canonical/format-detection/OG 全套/Twitter Card、JSON-LD（WebSite+Organization+WebApplication+FAQPage，均对应页面真实内容，不虚构评分）。
+- [x] **教程内容页**：新目录 `pages/`（服务端渲染，不走 /static 避免重复 URL）；`/guides` 列表 + 4 篇详情（B站下载/抖音去水印/AI总结/字幕提取），每篇独立 TDK + 700+ 字正文 + 面包屑 + FAQ + Article/BreadcrumbList/FAQPage JSON-LD + 互链；slug 白名单校验，未知 404（noindex）。
+- [x] **技术配置**：`GET /robots.txt`（禁 /api/，不拦 CSS/JS）、`GET /sitemap.xml`（6 URL）、`SITE_BASE_URL` 配置（未配置时 `{{SITE_URL}}` 渲染为相对路径占位，上线填 `.env` 即生效）、`static/og-image.jpg`（1200x630 分享图）。
+- [x] **内链**：首页导航「下载教程」+ 页脚 5 条教程链接；各教程页互链并回链首页工具区。
+- ⚠️ **上线（M3）动作**：`.env` 填 `SITE_BASE_URL`；GSC/百度/必应/360/搜狗站长平台提交 sitemap；反代转发 `X-Forwarded-*`；页脚 ICP 占位符替换。
 
 ### M3 待办
 - [ ] 部署：反代 + HTTPS + ICP 备案

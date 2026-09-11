@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>B站视频怎么下载到本地 - 闪电下载 | 哔哩哔哩视频下载保存教程</title>
+  <meta name="description" content="B站视频怎么下载到本地？本教程详解如何用闪电下载把哔哩哔哩视频保存到电脑或手机：复制BV链接、粘贴解析、选择1080P/4K清晰度一键保存，还支持提取B站AI字幕并生成视频总结，附常见问题解答。" />
+  <meta name="keywords" content="B站视频下载,哔哩哔哩视频下载,B站视频保存到本地,B站下载工具,B站视频解析,bilibili视频下载" />
+  <meta name="robots" content="index, follow" />
+  <meta name="format-detection" content="telephone=no" />
+  <link rel="canonical" href="{{SITE_URL}}/guides/bilibili-video-download" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>" />
+
+  <meta property="og:title" content="B站视频怎么下载到本地？哔哩哔哩视频下载保存教程" />
+  <meta property="og:description" content="复制BV链接即可解析下载B站1080P/4K视频，支持字幕提取与AI总结，附详细步骤与常见问题。" />
+  <meta property="og:image" content="{{SITE_URL}}/static/og-image.jpg" />
+  <meta property="og:type" content="article" />
+  <meta property="og:url" content="{{SITE_URL}}/guides/bilibili-video-download" />
+  <meta property="og:locale" content="zh_CN" />
+  <meta property="og:site_name" content="闪电下载" />
+  <meta name="twitter:card" content="summary_large_image" />
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "Article",
+        "headline": "B站视频怎么下载到本地？哔哩哔哩视频下载保存教程",
+        "description": "用闪电下载把哔哩哔哩视频保存到电脑或手机的分步教程，支持1080P/4K与字幕提取。",
+        "inLanguage": "zh-CN",
+        "datePublished": "2026-09-11",
+        "dateModified": "2026-09-11",
+        "author": { "@type": "Organization", "name": "闪电下载" },
+        "publisher": { "@type": "Organization", "name": "闪电下载", "logo": { "@type": "ImageObject", "url": "{{SITE_URL}}/static/og-image.jpg" } },
+        "mainEntityOfPage": "{{SITE_URL}}/guides/bilibili-video-download"
+      },
+      {
+        "@type": "BreadcrumbList",
+        "itemListElement": [
+          { "@type": "ListItem", "position": 1, "name": "首页", "item": "{{SITE_URL}}/" },
+          { "@type": "ListItem", "position": 2, "name": "下载教程", "item": "{{SITE_URL}}/guides" },
+          { "@type": "ListItem", "position": 3, "name": "B站视频下载", "item": "{{SITE_URL}}/guides/bilibili-video-download" }
+        ]
+      },
+      {
+        "@type": "FAQPage",
+        "mainEntity": [
+          { "@type": "Question", "name": "下载B站视频需要登录吗？", "acceptedAnswer": { "@type": "Answer", "text": "普通公开视频不需要登录，直接粘贴链接即可解析下载。只有提取部分视频的AI字幕时需要提供B站登录态。" } },
+          { "@type": "Question", "name": "能下载B站番剧、影视等版权内容吗？", "acceptedAnswer": { "@type": "Answer", "text": "不支持。付费及版权保护内容无法下载，请使用官方渠道观看。" } },
+          { "@type": "Question", "name": "B站视频最高能下载什么清晰度？", "acceptedAnswer": { "@type": "Answer", "text": "取决于原视频提供的最高档位，通常最高支持1080P，部分视频支持4K，高清档位会自动合并音视频。" } }
+        ]
+      }
+    ]
+  }
+  </script>
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    function __applyTailwindConfig(){if(!window.tailwind)return;tailwind.config={theme:{extend:{colors:{brand:{DEFAULT:'#1777ff',dark:'#1666e6',soft:'#eaf2ff'}},fontFamily:{sans:['Inter','system-ui','sans-serif']}}}};}
+    if(window.tailwind)__applyTailwindConfig();else window.addEventListener('load',__applyTailwindConfig);
+  </script>
+  <link rel="stylesheet" href="/static/styles.css" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+</head>
+<body class="bg-white text-slate-900 antialiased">
+  <header class="sticky top-0 z-50 bg-white/80 backdrop-blur border-b border-slate-100">
+    <div class="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between">
+      <a href="/" class="flex items-center gap-2 font-extrabold text-lg tracking-tight">
+        <span class="inline-flex w-8 h-8 items-center justify-center rounded-lg bg-brand text-white text-sm shadow-sm">⚡</span>
+        <span>闪电下载<span class="text-brand">.</span></span>
+      </a>
+      <nav class="flex items-center gap-6 text-sm font-medium text-slate-500">
+        <a href="/#tool" class="hover:text-slate-900 transition">解析工具</a>
+        <a href="/guides" class="text-brand font-semibold">下载教程</a>
+        <a href="/#pricing" class="hover:text-slate-900 transition">定价</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="max-w-3xl mx-auto px-4 pt-10 pb-16">
+    <nav aria-label="面包屑" class="text-xs text-slate-400 mb-4">
+      <a href="/" class="hover:text-slate-600">首页</a><span class="mx-1">/</span>
+      <a href="/guides" class="hover:text-slate-600">下载教程</a><span class="mx-1">/</span>
+      <span class="text-slate-600">B站视频下载</span>
+    </nav>
+
+    <article>
+      <h1 class="text-3xl md:text-4xl font-black text-slate-900 leading-tight">B站视频怎么下载到本地？一招搞定高清保存</h1>
+      <p class="mt-3 text-sm text-slate-400">更新于 2026-09-11 · 约 3 分钟读完</p>
+
+      <p class="mt-6 text-slate-600 leading-relaxed">
+        B站（哔哩哔哩）是很多人学习、追番、看知识区的首选平台，但网页端并没有提供「下载到本地」的按钮，官方 App 的缓存又只能在 App 内观看，换设备就没了。这篇教程教你用 <a href="/" class="text-brand underline">闪电下载</a>，在浏览器里直接把 B站视频保存成 MP4 文件，电脑、手机都能操作，不需要安装任何软件。
+      </p>
+
+      <h2 class="mt-10 text-2xl font-black text-slate-900">下载步骤（30 秒完成）</h2>
+      <ol class="mt-4 space-y-4">
+        <li class="rounded-xl border border-slate-200 p-4">
+          <h3 class="font-bold text-slate-900"><span class="text-brand mr-1">1.</span> 复制视频链接</h3>
+          <p class="mt-1 text-sm text-slate-600 leading-relaxed">在浏览器地址栏复制 <code class="bg-slate-100 rounded px-1">bilibili.com/video/BV…</code> 形式的视频链接；手机 App 里点「分享 → 复制链接」也可以。</p>
+        </li>
+        <li class="rounded-xl border border-slate-200 p-4">
+          <h3 class="font-bold text-slate-900"><span class="text-brand mr-1">2.</span> 粘贴并解析</h3>
+          <p class="mt-1 text-sm text-slate-600 leading-relaxed">打开 <a href="/#tool" class="text-brand underline">闪电下载解析工具</a>，把链接粘贴进输入框，点击「开始解析」。几秒后就能看到视频封面、标题、时长和全部可选清晰度。</p>
+        </li>
+        <li class="rounded-xl border border-slate-200 p-4">
+          <h3 class="font-bold text-slate-900"><span class="text-brand mr-1">3.</span> 选清晰度，一键保存</h3>
+          <p class="mt-1 text-sm text-slate-600 leading-relaxed">在「选择清晰度与格式」里挑一档（最高支持 4K，1080P 以上会自动合并音视频），点「⬇️ 下载」，文件会自动保存到你的下载目录。</p>
+        </li>
+      </ol>
+
+      <h2 class="mt-10 text-2xl font-black text-slate-900">进阶玩法：AI 字幕提取与视频总结</h2>
+      <p class="mt-3 text-slate-600 leading-relaxed">
+        解析成功后，页面右侧的 AI 面板还能对这条 B站视频做更多事：一键提取字幕导出 SRT（B站的 AI 字幕需要在弹窗里粘贴登录态，按提示操作即可，详见<a href="/guides/subtitle-extract-translate" class="text-brand underline">字幕提取教程</a>）；生成结构化<a href="/guides/ai-video-summary" class="text-brand underline">视频总结</a>，包括摘要、章节时间轴和思维导图——适合快速消化知识区长视频。
+      </p>
+
+      <h2 class="mt-10 text-2xl font-black text-slate-900">常见问题</h2>
+      <div class="mt-4 space-y-3">
+        <details class="rounded-xl border border-slate-200 p-4">
+          <summary class="cursor-pointer font-semibold text-slate-800">下载 B站视频需要登录吗？</summary>
+          <p class="mt-2 text-sm text-slate-500 leading-relaxed">普通公开视频不需要登录，直接粘贴链接即可解析下载。只有提取部分视频的 AI 字幕时需要提供 B站登录态（SESSDATA），按页面弹窗提示操作即可。</p>
+        </details>
+        <details class="rounded-xl border border-slate-200 p-4">
+          <summary class="cursor-pointer font-semibold text-slate-800">能下载番剧、影视等版权内容吗？</summary>
+          <p class="mt-2 text-sm text-slate-500 leading-relaxed">不支持。付费及版权保护内容无法下载，请使用官方渠道观看。本工具仅供个人学习、研究与备份使用。</p>
+        </details>
+        <details class="rounded-xl border border-slate-200 p-4">
+          <summary class="cursor-pointer font-semibold text-slate-800">最高能下载什么清晰度？</summary>
+          <p class="mt-2 text-sm text-slate-500 leading-relaxed">取决于原视频提供的最高档位，通常最高 1080P，部分视频支持 4K / 60fps，高清档位会自动合并音视频轨。</p>
+        </details>
+        <details class="rounded-xl border border-slate-200 p-4">
+          <summary class="cursor-pointer font-semibold text-slate-800">手机上可以操作吗？</summary>
+          <p class="mt-2 text-sm text-slate-500 leading-relaxed">可以。页面完全响应式，手机浏览器打开闪电下载，粘贴链接即可解析并保存到手机相册可用的 MP4 文件。</p>
+        </details>
+      </div>
+
+      <div class="mt-10 rounded-2xl bg-brand-soft p-6 text-center">
+        <h2 class="font-bold text-slate-900">去试试刚才学到的操作</h2>
+        <p class="mt-1 text-sm text-slate-600">粘贴 B站链接，立即解析下载。</p>
+        <a href="/#tool" class="mt-4 inline-block rounded-xl bg-brand text-white font-semibold px-6 py-3 text-sm hover:bg-brand-dark transition">开始下载B站视频</a>
+      </div>
+    </article>
+  </main>
+
+  <footer class="border-t border-slate-100 bg-slate-50/60">
+    <div class="max-w-6xl mx-auto px-4 py-10 text-center text-sm text-slate-400">
+      <p class="font-semibold text-slate-500">⚡ 闪电下载 · 全网视频一键存</p>
+      <nav class="mt-4 flex flex-wrap justify-center gap-x-5 gap-y-2" aria-label="相关教程">
+        <a href="/guides" class="hover:text-slate-600 transition">全部教程</a>
+        <a href="/guides/douyin-no-watermark-download" class="hover:text-slate-600 transition">抖音去水印</a>
+        <a href="/guides/ai-video-summary" class="hover:text-slate-600 transition">AI视频总结</a>
+        <a href="/guides/subtitle-extract-translate" class="hover:text-slate-600 transition">字幕提取翻译</a>
+      </nav>
+      <p class="mt-4 mx-auto max-w-2xl leading-relaxed">
+        免责声明：本站下载内容仅供个人学习、研究及备份使用，请遵守原始平台的使用条款与版权法律法规，<b>严禁</b>用于侵权、转售或任何商业用途。因违规使用产生的一切后果由使用者自行承担。
+      </p>
+      <p class="mt-4">© 2026 闪电下载 · 沪ICP备XXXXXXXX号 · 联系方式：support@example.com</p>
+    </div>
+  </footer>
+</body>
+</html>

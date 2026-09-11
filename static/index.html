@@ -3,9 +3,85 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>闪电下载 · 全网视频一键存到本地</title>
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <title>视频下载 - 闪电下载 | 全网视频在线解析下载，无水印批量保存，支持B站抖音YouTube</title>
+  <meta name="description" content="闪电下载是免费的在线视频下载与AI总结工具：粘贴链接即可解析下载B站、抖音、YouTube等1000+站点的视频，支持无水印、批量下载、超清画质、字幕提取翻译与AI智能摘要，手机浏览器直接使用，无需安装软件，立即免费体验！" />
+  <meta name="keywords" content="视频下载,在线视频下载,视频下载器,B站视频下载,抖音去水印,YouTube视频下载,批量下载视频,字幕提取,AI视频摘要,闪电下载" />
+  <meta name="robots" content="index, follow" />
+  <meta name="format-detection" content="telephone=no" />
+  <link rel="canonical" href="{{SITE_URL}}/" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>" />
-  <meta name="description" content="一条链接，下遍全网。批量解析、超清画质、字幕翻译、AI 摘要，随时随地浏览器/手机都能下载视频。" />
+
+  <!-- ========== Open Graph（微信/微博/QQ 等社交分享卡片） ========== -->
+  <meta property="og:title" content="视频下载 - 闪电下载 | 全网视频在线解析下载" />
+  <meta property="og:description" content="粘贴链接即可解析下载B站、抖音、YouTube等1000+站点视频，无水印、批量下载、字幕提取翻译与AI智能摘要，免费体验。" />
+  <meta property="og:image" content="{{SITE_URL}}/static/og-image.jpg" />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="{{SITE_URL}}/" />
+  <meta property="og:locale" content="zh_CN" />
+  <meta property="og:site_name" content="闪电下载" />
+
+  <!-- ========== Twitter Card ========== -->
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="视频下载 - 闪电下载 | 全网视频在线解析下载" />
+  <meta name="twitter:description" content="粘贴链接即可下载B站、抖音、YouTube等1000+站点视频，无水印、批量下载、AI摘要，免费体验。" />
+  <meta name="twitter:image" content="{{SITE_URL}}/static/og-image.jpg" />
+
+  <!-- ========== 结构化数据（JSON-LD）：WebSite / Organization / WebApplication / FAQPage ========== -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "WebSite",
+        "name": "闪电下载",
+        "url": "{{SITE_URL}}/"
+      },
+      {
+        "@type": "Organization",
+        "name": "闪电下载",
+        "url": "{{SITE_URL}}/",
+        "logo": "{{SITE_URL}}/static/og-image.jpg"
+      },
+      {
+        "@type": "WebApplication",
+        "name": "闪电下载",
+        "url": "{{SITE_URL}}/",
+        "applicationCategory": "MultimediaApplication",
+        "operatingSystem": "Web",
+        "description": "粘贴链接即可解析下载B站、抖音、YouTube等1000+站点视频，支持无水印、批量下载、字幕提取翻译与AI智能摘要。",
+        "featureList": "视频解析下载,批量下载,无水印,4K超清,字幕提取翻译,AI视频摘要,章节时间轴,思维导图,视频问答",
+        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "CNY" }
+      },
+      {
+        "@type": "FAQPage",
+        "mainEntity": [
+          {
+            "@type": "Question",
+            "name": "下载会加密或加广告吗？",
+            "acceptedAnswer": { "@type": "Answer", "text": "不会。我们直接提供原始文件，无水印、无广告，下载即你所有。" }
+          },
+          {
+            "@type": "Question",
+            "name": "手机能用吗？",
+            "acceptedAnswer": { "@type": "Answer", "text": "可以，本页面完全响应式，手机浏览器直接访问即可解析下载。" }
+          },
+          {
+            "@type": "Question",
+            "name": "部分平台下载失败怎么办？",
+            "acceptedAnswer": { "@type": "Answer", "text": "部分站点有登录、地区或版权限制，会提示明确原因。若持续失败，可能是平台反爬或链接已失效。" }
+          },
+          {
+            "@type": "Question",
+            "name": "下载文件会保留多久？",
+            "acceptedAnswer": { "@type": "Answer", "text": "服务器仅在下载会话期间临时保存，到期自动清理，不留存你的内容。" }
+          }
+        ]
+      }
+    ]
+  }
+  </script>
+
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
@@ -40,6 +116,7 @@
       <nav class="hidden sm:flex items-center gap-6 text-sm font-medium text-slate-500">
         <a href="#tool" class="hover:text-slate-900 transition">解析工具</a>
         <a href="#features" class="hover:text-slate-900 transition">特色</a>
+        <a href="/guides" class="hover:text-slate-900 transition">下载教程</a>
         <a href="#pricing" class="hover:text-slate-900 transition">定价</a>
         <a href="#faq" class="hover:text-slate-900 transition">帮助</a>
       </nav>
@@ -411,6 +488,13 @@
   <footer class="border-t border-slate-100 bg-slate-50/60">
     <div class="max-w-6xl mx-auto px-4 py-10 text-center text-sm text-slate-400">
       <p class="font-semibold text-slate-500">⚡ 闪电下载 · 全网视频一键存</p>
+      <nav class="mt-4 flex flex-wrap justify-center gap-x-5 gap-y-2" aria-label="站内导航">
+        <a href="/guides" class="hover:text-slate-600 transition">视频下载教程</a>
+        <a href="/guides/bilibili-video-download" class="hover:text-slate-600 transition">B站视频下载</a>
+        <a href="/guides/douyin-no-watermark-download" class="hover:text-slate-600 transition">抖音去水印</a>
+        <a href="/guides/ai-video-summary" class="hover:text-slate-600 transition">AI视频总结</a>
+        <a href="/guides/subtitle-extract-translate" class="hover:text-slate-600 transition">字幕提取翻译</a>
+      </nav>
       <p class="mt-4 mx-auto max-w-2xl leading-relaxed">
         免责声明：本站下载内容仅供个人学习、研究及备份使用，请遵守原始平台的使用条款与版权法律法规，<b>严禁</b>用于侵权、转售或任何商业用途。因违规使用产生的一切后果由使用者自行承担。
       </p>

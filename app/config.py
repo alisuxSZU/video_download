@@ -41,7 +41,7 @@ def _float(v: str | None, default: float) -> float:
 class Settings:
     host: str = os.getenv("HOST", "0.0.0.0")
     port: int = _int(os.getenv("PORT"), 8000)
-    version: str = "0.4.1"
+    version: str = "0.6.0"
 
     # ---- 下载 / 临时文件 ----
     # 尽量用短路径，规避 Windows 260 长度限制
@@ -60,6 +60,11 @@ class Settings:
     douyin_headless: bool = _bool(os.getenv("DOUYIN_HEADLESS"), True)
     douyin_timeout_seconds: int = _int(os.getenv("DOUYIN_TIMEOUT_SECONDS"), 45)
     douyin_auto_refresh: bool = _bool(os.getenv("DOUYIN_AUTO_REFRESH"), True)
+
+    # ---- SEO ----
+    # 生产域名（如 https://example.com，不带末尾斜杠）。用于 canonical / og:url / sitemap 绝对 URL。
+    # 未配置时页面内为相对路径占位（按当前域名解析），上线后在此填写即全站生效。
+    site_base_url: str = os.getenv("SITE_BASE_URL", "").rstrip("/")
 
     # ---- 安全 / 限流 ----
     parse_rate_per_min: int = _int(os.getenv("RATE_PARSE_PER_MIN"), 20)
