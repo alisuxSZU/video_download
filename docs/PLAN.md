@@ -21,6 +21,7 @@
 | M2 | 字幕提取/翻译 + AI 摘要 | ✅ 完成（已真实浏览器端到端回归）：学习型结构化摘要 v2（章节·时间轴/思维导图/SSE 问答）+ 前端四面板，逐功能命中 + 结果缓存 + 换链接清空 + 问答气泡聊天均已通过 e2e |
 | M2.7 `v0.5.0` | B站字幕直调官方 API + 前端粘贴 SESSDATA | ✅ 完成（mock 61 + 非 B站回归 23 + 真实 B站端到端：人工 zh 114 条 / AI zh 599 条 / summary 全链路 200，全绿） |
 | M2.8 `v0.6.0` | SEO 搜索引擎优化（TDK/结构化数据/robots/sitemap/教程内容页） | ✅ 完成（详见 CHANGELOG 0.6.0） |
+| M2.9 `v0.6.1` | GEO 生成式引擎优化（llms.txt/AI 爬虫声明/IndexNow/TL;DR 答案块） | ✅ 完成（详见 CHANGELOG 0.6.1） |
 | M3 | 加固上线（反代/HTTPS/备案/回归） | ⬜ |
 
 > M2 已完成并通过端到端回归：`extract_subtitle`（翻译）、`/api/ai/summary`（v2 结构化，含章节时间轴 + 思维导图派生 + Markdown 全文）、`/api/ai/ask`（SSE 流式问答，前端气泡聊天）。`static/app.js` 的摘要面板已拆成「摘要 / 章节·时间轴 / 思维导图 / 问答」四个 tab，支持复制/下载 `.md`，并按 `url→feature` 缓存。**端到端验证**由仓库根 `e2e_test.py`（Playwright + 系统 Chrome，真实公网链接）回归。
@@ -221,6 +222,14 @@
 - [x] **技术配置**：`GET /robots.txt`（禁 /api/，不拦 CSS/JS）、`GET /sitemap.xml`（6 URL）、`SITE_BASE_URL` 配置（未配置时 `{{SITE_URL}}` 渲染为相对路径占位，上线填 `.env` 即生效）、`static/og-image.jpg`（1200x630 分享图）。
 - [x] **内链**：首页导航「下载教程」+ 页脚 5 条教程链接；各教程页互链并回链首页工具区。
 - ⚠️ **上线（M3）动作**：`.env` 填 `SITE_BASE_URL`；GSC/百度/必应/360/搜狗站长平台提交 sitemap；反代转发 `X-Forwarded-*`；页脚 ICP 占位符替换。
+
+### M2.9 GEO 生成式引擎优化（v0.6.1，已实现）
+> 目标：ChatGPT/Perplexity/Claude/豆包/Kimi/文心一言等 AI 引擎回答相关问题时优先检索并引用本站。前提核查：AI 爬虫本可抓取（robots 仅禁 /api/、无 UA 拦截、限流仅在 API），缺口在内容可引用性与实体信号。**已人工确认**：GitHub 公开署名；加 IndexNow；llms.txt 中文 + 英文概览。
+- [x] **`/llms.txt` + `/llms-full.txt`**（llmstxt.org 约定）：站点说明/关键事实/FAQ/实体信息 + 全站 Markdown 全文；绝对 URL（SITE_BASE_URL 优先，request.base_url 兜底）。
+- [x] **robots.txt 显式 AI 爬虫组**：GPTBot/ClaudeBot/PerplexityBot/Google-Extended/Bytespider（豆包）/PetalBot（小艺）等 12 组 `Allow: /`。
+- [x] **IndexNow**：`INDEXNOW_KEY` 配置 + `/{KEY}.txt` 验证路由（不符 404）；上线后 POST api.indexnow.org 推送 Bing。
+- [x] **内容增强**：4 篇教程加 TL;DR 答案块（AI 引用优先摘录）；HowTo JSON-LD 与页面步骤一一对应；Organization 补 description + sameAs（GitHub 实体一致性）。
+- ⚠️ **上线（M3）动作**：部署后用 `.env` 中 INDEXNOW_KEY 把 6 个 URL POST 到 api.indexnow.org；后续内容更新同步维护 pages/llms-full.txt（与页面事实保持一致）。
 
 ### M3 待办
 - [ ] 部署：反代 + HTTPS + ICP 备案

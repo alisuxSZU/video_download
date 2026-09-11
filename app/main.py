@@ -119,7 +119,19 @@ def _404_response() -> HTMLResponse:
 
 @app.get("/robots.txt", include_in_schema=False)
 async def robots_txt():
-    lines = ["User-agent: *", "Disallow: /api/"]
+    # GEO：显式声明主流 AI 引擎爬虫可抓取全部页面（豆包/ChatGPT/Claude/Perplexity 等内容收录的前提）
+    ai_bots = (
+        "GPTBot", "OAI-SearchBot", "ChatGPT-User",  # OpenAI / ChatGPT
+        "ClaudeBot", "anthropic-ai",                # Anthropic / Claude
+        "PerplexityBot", "Google-Extended", "Applebot-Extended",
+        "Amazonbot", "meta-externalagent",          # Meta AI
+        "Bytespider",                               # 字节跳动 / 豆包
+        "PetalBot",                                 # 华为 / 小艺
+    )
+    lines: list[str] = []
+    for bot in ai_bots:
+        lines += [f"User-agent: {bot}", "Allow: /", ""]
+    lines += ["User-agent: *", "Disallow: /api/"]
     if settings.site_base_url:
         lines.append(f"Sitemap: {settings.site_base_url}/sitemap.xml")
     return PlainTextResponse("\n".join(lines) + "\n")
@@ -165,6 +177,38 @@ async def guide_page(slug: str):
     if not file.exists():
         return _404_response()
     return HTMLResponse(_render_page(file))
+
+
+@app.get("/llms.txt", include_in_schema=False)
+async def llms_txt(request: Request):
+    """GEO：面向 AI 引擎的站点说明（llmstxt.org 约定），链接用绝对 URL。"""
+    base = settings.site_base_url or str(request.base_url).rstrip("/")
+    file = PAGES_DIR / "llms.txt"
+    if not file.exists():
+        return PlainTextResponse("", status_code=404)
+    # 注意：不用 _render_page（其会先用 site_base_url 替换占位符），此处需用 request 兜底域名
+    return PlainTextResponse(file.read_text(encoding="utf-8").replace("{{SITE_URL}}", base), media_type="text/plain; charset=utf-8")
+
+
+@app.get("/llms-full.txt", include_in_schema=False)
+async def llms_full_txt(request: Request):
+    """GEO：站点全文 Markdown 版（首页 + 全部教程），供 AI 引擎整站引用。"""
+    base = settings.site_base_url or str(request.base_url).rstrip("/")
+    file = PAGES_DIR / "llms-full.txt"
+    if not file.exists():
+        return PlainTextResponse("", status_code=404)
+    return PlainTextResponse(file.read_text(encoding="utf-8").replace("{{SITE_URL}}", base), media_type="text/plain; charset=utf-8")
+
+
+@app.get("/{keyfile}.txt", include_in_schema=False)
+async def indexnow_key_file(keyfile: str):
+    """IndexNow 验证文件：GET /{INDEXNOW_KEY}.txt 返回 key 本身；未配置或 key 不符一律 404。
+
+    注意：必须注册在 robots.txt / llms.txt 等精确 .txt 路由之后，避免遮蔽。
+    """
+    if not settings.indexnow_key or keyfile != settings.indexnow_key:
+        return PlainTextResponse("Not Found", status_code=404)
+    return PlainTextResponse(settings.indexnow_key, media_type="text/plain; charset=utf-8")
 
 
 def run() -> None:

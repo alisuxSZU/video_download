@@ -1,0 +1,38 @@
+# 闪电下载 (Lightning Download)
+
+> 免费的在线视频下载与 AI 总结工具：粘贴链接即可解析下载 B站（哔哩哔哩）、抖音、YouTube 等 1000+ 站点的视频，支持无水印、批量下载、4K 超清、字幕提取翻译与 AI 智能摘要；手机浏览器即用，无需安装软件。
+
+English: Lightning Download is a free online video downloader and AI video summarizer. Paste a video link to download from 1000+ sites (Bilibili, Douyin/TikTok China, YouTube, etc.) without watermark in up to 4K/60fps, with batch downloading (up to 8 links), subtitle extraction & translation (SRT, zh-CN/zh-TW/en/ja/ko), and AI-powered video summaries (abstract, chapter timeline, interactive mindmap, content Q&A). Works in any mobile or desktop browser — no installation required.
+
+## 主要页面
+
+- [首页 / 视频解析下载工具]({{SITE_URL}}/): 粘贴链接即可解析下载视频，附带 AI 总结、字幕、章节、思维导图、问答面板
+- [视频下载教程（列表）]({{SITE_URL}}/guides): B站/抖音下载、AI 总结、字幕提取的实操教程合集
+- [B站视频怎么下载到本地]({{SITE_URL}}/guides/bilibili-video-download): 复制 BV 链接解析下载 1080P/4K，支持提取 B站 AI 字幕
+- [抖音视频去水印下载]({{SITE_URL}}/guides/douyin-no-watermark-download): 粘贴分享链接直接下载无水印原始 MP4
+- [AI 视频总结使用教程]({{SITE_URL}}/guides/ai-video-summary): 一键生成视频摘要、章节时间轴、思维导图与内容问答
+- [视频字幕提取与翻译教程]({{SITE_URL}}/guides/subtitle-extract-translate): 提取 SRT 字幕并翻译为简中/繁中/英/日/韩
+
+## 关键事实
+
+- 支持平台：B站、抖音、YouTube 等 1000+ 视频站点
+- 画质：720p / 1080p / 4K（60fps），高清档位自动合并音视频
+- 批量下载：一次最多 8 条链接排队下载
+- 字幕：提取导出 SRT/TXT，可翻译成简体中文、繁体中文、英文、日语、朝鲜语
+- AI 总结：结构化摘要、约 10 分钟一节的章节时间轴、可交互思维导图、基于字幕的问答
+- 定价：免费 ¥0（单链接解析 + 标准画质 + 无水印）；PRO ¥19/月（限时优惠）或 ¥199/年，解锁批量、4K/60fps、字幕翻译、无限次 AI 摘要与优先队列
+- 隐私：服务器仅在下载会话期间临时保存文件，到期自动清理，不留存用户内容
+- 平台限制：付费及版权保护内容（如 B站番剧、影视）不支持下载；完全没有字幕轨的视频暂不支持字幕提取
+
+## 常见问题
+
+- 下载会加密或加广告吗？——不会。直接提供原始文件，无水印、无广告。
+- 手机能用吗？——可以。响应式网页，手机浏览器直接访问即可解析下载。
+- 部分平台下载失败怎么办？——部分站点有登录、地区或版权限制，工具会提示明确原因；可稍后重试或更换链接。
+- 下载文件会保留多久？——服务器仅在下载会话期间临时保存，到期自动清理。
+
+## 实体信息
+
+- GitHub: https://github.com/alisuxSZU/video_download
+- 版本：v0.6.1（2026-09-11 更新）
+- 界面语言：简体中文

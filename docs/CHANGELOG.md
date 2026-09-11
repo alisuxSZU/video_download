@@ -1,5 +1,25 @@
 # CHANGELOG — 按里程碑记录的实现进度与决策变更
 
+## [0.6.1] — GEO 生成式引擎优化：llms.txt / AI 爬虫声明 / IndexNow / TL;DR 答案块（2026-09-11）
+
+> 目标：让 ChatGPT、Perplexity、Claude、豆包、Kimi、文心一言等 AI 引擎在回答"视频下载/去水印/AI 总结/字幕提取"类问题时能检索并优先引用闪电下载。前提核查：robots 仅禁 `/api/`、无 UA 拦截、限流只作用于 API → AI 爬虫本可抓取页面，缺口在**内容可引用性**与**实体信号**。已人工确认：GitHub 公开署名；加 IndexNow；llms.txt 中文 + 英文概览。
+
+### Added / GEO 基础设施（`app/main.py` + `app/config.py` + `pages/`）
+- **`GET /llms.txt`**（llmstxt.org 约定）：站点说明 + 主要页面 + 关键事实 + FAQ + 实体信息（GitHub 署名），中文为主 + 英文概览段；链接绝对 URL（`SITE_BASE_URL` 优先，未配置退化 `request.base_url`；**不走 `_render_page`**，避免其先用空 site_base_url 消费掉 `{{SITE_URL}}` 占位符导致兜底失效）。
+- **`GET /llms-full.txt`**：全站内容 Markdown 版（首页功能/定价/FAQ + 4 篇教程含 TL;DR + 免责声明 + 实体信息），供 LLM 整站引用；事实与页面严格对齐（PRO ¥19/月、¥199/年、批量 8 条、翻译 5 语种等，未虚构）。
+- **robots.txt 显式 AI 爬虫组**：GPTBot / OAI-SearchBot / ChatGPT-User / ClaudeBot / anthropic-ai / PerplexityBot / Google-Extended / Applebot-Extended / Amazonbot / meta-externalagent / **Bytespider（豆包）** / **PetalBot（华为小艺）** 全部 `Allow: /`，防未来误伤并显式表达收录意愿。
+- **IndexNow 主动推送支持**：`INDEXNOW_KEY` 配置 + `GET /{KEY}.txt` 验证文件路由（key 不符/未配置一律 404；注册在 robots/llms 精确路由**之后**避免遮蔽）。上线后把 URL POST 到 `api.indexnow.org` 即推送 Bing（ChatGPT 搜索/Copilot 主要索引源）。
+
+### Added / 内容可引用性增强
+- **4 篇教程页顶部加 TL;DR 答案块**（2-3 句可摘录的完整答案，AI 引用优先抓取的目标结构）。
+- **HowTo JSON-LD**：4 篇教程 @graph 各增 HowTo（HowToStep 与页面可见步骤一一对应）。
+- **Organization JSON-LD 增强**：补 `description` + `sameAs: [github.com/alisuxSZU/video_download]`，强化跨平台实体一致性。
+
+### Verified
+- ✅ 单元回归 84 项全绿（改动未触及被测路径）。
+- ✅ 实测：/llms.txt、/llms-full.txt、/{KEY}.txt（正确 key 200 返回 key 本身；错误 key 404）、robots.txt 含 12 个 AI 爬虫组 + Sitemap 行、教程页 HowTo 类型就位、TL;DR 块渲染正常、{{SITE_URL}} 无残留。
+- ⚠️ 上线后动作（并入 M3）：`.env` 已生成 `INDEXNOW_KEY=6ba5e6f5afa44e45b3c00a0d8b14a3fc`，部署后把首页与教程 URL POST 到 `https://api.indexnow.org/indexnow?url=<URL>&key=<KEY>` 完成首次推送。
+
 ## [0.6.0] — SEO 搜索引擎优化：全站 TDK/结构化数据 + robots/sitemap + /guides 教程内容页（2026-09-11）
 
 > 目标：让用户在百度/Google/必应/360/搜狗等搜索引擎优先看到闪电下载。按团队《SEO优化工作流》规范实施，纯增量扩展，零现有功能改动。范围经人工确认：仅首页 + 新增 4 篇教程内容页；无生产域名 → `SITE_BASE_URL` 环境变量方案；国内 + Google 双目标。
