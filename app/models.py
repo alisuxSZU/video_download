@@ -38,20 +38,24 @@ class SubtitleRequest(BaseModel):
     lang: str = "zh"
     is_auto: bool = False
     target_lang: str | None = None
+    bili_sessdata: str | None = None  # 前端从已登录浏览器粘贴的 SESSDATA，优先于 COOKIES_FILE
 
 
 class SummaryRequest(BaseModel):
     url: str
+    bili_sessdata: str | None = None
 
 
 class ChaptersRequest(BaseModel):
     """独立「章节·时间轴」请求（单独调用 LLM，与摘要解耦）。"""
     url: str
+    bili_sessdata: str | None = None
 
 
 class MindmapRequest(BaseModel):
     """独立「思维导图」请求（单独调用 LLM，与摘要解耦）。"""
     url: str
+    bili_sessdata: str | None = None
 
 
 class AskRequest(BaseModel):
@@ -59,6 +63,7 @@ class AskRequest(BaseModel):
     url: str
     question: str
     history: list[dict[str, str]] | None = None
+    bili_sessdata: str | None = None
 
 
 # ---------- Job ----------

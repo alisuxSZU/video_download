@@ -19,6 +19,7 @@
 | M1 `v0.1.0` | 核心业务 + 前端精美 + 安全基础 | ✅ |
 | M1.1 `v0.1.2` | 抖音下载（服务端无头浏览器） | ✅ |
 | M2 | 字幕提取/翻译 + AI 摘要 | ✅ 完成（已真实浏览器端到端回归）：学习型结构化摘要 v2（章节·时间轴/思维导图/SSE 问答）+ 前端四面板，逐功能命中 + 结果缓存 + 换链接清空 + 问答气泡聊天均已通过 e2e |
+| M2.7 `v0.5.0` | B站字幕直调官方 API + 前端粘贴 SESSDATA | ✅ 完成（mock 61 + 非 B站回归 23 + 真实 B站端到端：人工 zh 114 条 / AI zh 599 条 / summary 全链路 200，全绿） |
 | M3 | 加固上线（反代/HTTPS/备案/回归） | ⬜ |
 
 > M2 已完成并通过端到端回归：`extract_subtitle`（翻译）、`/api/ai/summary`（v2 结构化，含章节时间轴 + 思维导图派生 + Markdown 全文）、`/api/ai/ask`（SSE 流式问答，前端气泡聊天）。`static/app.js` 的摘要面板已拆成「摘要 / 章节·时间轴 / 思维导图 / 问答」四个 tab，支持复制/下载 `.md`，并按 `url→feature` 缓存。**端到端验证**由仓库根 `e2e_test.py`（Playwright + 系统 Chrome，真实公网链接）回归。
@@ -120,12 +121,15 @@
 | 18 | **`height:100%` + margin 溢出 → 双滚动条**（v0.4.1） | 面板撑满用 `height:100%` 时若残留 `mt-4`，内容会溢出 `#anBody` 16px → 内外同时出现滚动条（主人截图「2 个拖动条」）。修法：桌面媒体查询里统一 `margin-top: 0`；「撑满+内部滚动」三件套 = `flex/height:100%` + 内容区 `flex:1 min-h-0 overflow-y-auto` 的 `min-h-0` 不可省（否则 flex 子项不收缩、滚动失效） |
 | 19 | **LLM 偶发 502：map-reduce 任一路失败整点 502**（v0.4.1） | 长视频摘要/章节/导图 = 多路并发 LLM 调用，任一路 网络抖动/5xx/JSON 格式异常 → 整个端点 502（e2e 连跑 24h 内观察 3 次，前端已友好降级但 console 报错）。修法：`_chat` 对 超时/连接/429/5xx 重试 1 次（401/400 不重试）；`_chat_json` 对「格式异常」**重新生成 1 次**（`_chat` 网络重试覆盖不到解析失败） |
 | 20 | **等高 + 内部滚动要用「内容面板撑满」而非「内容区滚动」**（v0.4.1） | 若直接让 `#anBody` 滚动而面板内容只占自然高度，面板下方会露出大片空白（主人反馈多次：字幕/问答下方「空白太多」）。正确姿势：右栏 `flex-col`，头部 `shrink-0` 固定，面板 `height:100%; margin-top:0` 撑满，面板内**内容区**（subText/askOutput/sumMd/sumChapters）`flex-1 min-h-0 overflow-y-auto` → 无空白、单滚动条、头部固定三者兼得 |
+| 21 | **B站立调必须用 `player/v2`（非 wbi/v2）+ SESSDATA + 浏览器会话**（v0.5.0，推翻早期结论） | yt-dlp 对 B站 `ai-zh` 支持不稳：① `need_login_subtitle=True` 视频无登录态时只产出弹幕 XML；② 长视频 AI 字幕分段只拿到开头。直调流程 `view`→`player/v2`→`subtitle_url`。**实测选型反转**：竞品脚本称"必须 wbi/v2、普通 v2 的 ai-zh URL 为空"——2026-09 实测恰好相反：**`wbi/v2` 带 SESSDATA 必 412 request was banned**（补 Sec-Ch-Ua/Sec-Fetch 指纹头、完整 cookie 集、curl_cffi 模拟 Chrome TLS、WBI 签名全部无效），而 **`player/v2` 带 SESSDATA 稳定 200 且 URL 有效**（无 cookie 时两者 subs 都恒空）。另有两个必要条件：① 先访问 B站首页+视频页养出 `buvid3/b_nut` 再注入 SESSDATA（裸调 URL 易全空）；② SESSDATA 是 HttpOnly，前端只能引导用户从 DevTools Application 面板复制，`document.cookie` 读不到。下载 body 免 cookie（url 自带 auth_key，协议相对地址补 `https:`） |
+| 22 | **B站长视频 AI 字幕分段 + 限流假残缺**（v0.5.0） | ① subtitles 列表里同 `lan` 可能有多条分段，必须**全部下载并按 `from` 排序、`(from,to,content)` 去重**合并（`_merge_bodies`）。② `subtitle_url` 空串或 `body` 空是**限流降级响应非真无字幕**（「假残缺」），克制重试（player 层 ≤3 次退避 2/5s，单语言 body ≤2 次退避 5/8s），重取拿新 url（旧 url 带 auth_key 会过期）；**不可高频重取**，实测会触发 IP 级风控（冷却 30~60 分钟）。③ 单独请求几百条、批量只几条即限流 |
+| 23 | **风控期 B站会下发「跨视频脏字幕」，必须做内容一致性校验**（v0.5.0） | 排查"出海视频摘要串成帕尼尼减肥/杨幂"时定位：强风控期 player/v2 仍 200，但只下发 1 条残缺轨且 `subtitle_url` 指向**别的视频**的字幕（实测 body 20 条/跨度 54s，视频实为 211s；首句为不相干内容）。旧逻辑 `同lan条目 or 全量列表` 在人工轨 URL 空时**跨语言偷换**到脏 AI 轨，直接把错误内容喂给 LLM。修法：① `_ordered_candidates` 按语言优先级去重排候选，严格逐语言尝试、重试只取同 lan；② `_span_plausible` 用 view 的 `duration` 校验字幕跨度（0.35×~1.6×），不合格跳过，全不合格报错提示重试——**宁可不摘要也不返回跨视频内容**；③ routes 对 B站跳过 yt-dlp 无 cookie probe（其残缺清单曾把选源误导到片头音乐轨，摘要误判"纯音乐"） |
 
 ## 六、已知限制（v1 有意为之）
 
 - 无持久化：重启丢进行中任务；单进程。
 - 字幕翻译/摘要依赖 LLM Key；无字幕视频无法摘要（**v1 不做本地 whisper 转写**）。
-- **B 站部分视频的字幕需登录态才下发**（`need_login_subtitle=True`，如 `BV1pGdsB2Ebq`、`BV1mAAmzqEfP`）。项目未配 `COOKIES_FILE` 时取不到真实字稿，此类视频**正确返回带登录引导语的 `no_subtitles`**（error 如实说明「确有字幕但需登录态，请配置 COOKIES_FILE」；此前误把弹幕 XML 当字幕，已修）。要取这类视频字幕需配置 **B 站登录 cookie（netscape cookies.txt，宜含 `SESSDATA`）**，见 CHANGELOG 0.2.0 Fixed。
+- **B 站部分视频的字幕需登录态才下发**（`need_login_subtitle=True`，如 `BV1pGdsB2Ebq`、`BV1mAAmzqEfP`）。未提供 SESSDATA 时取不到真实字稿，此类视频**正确返回带登录引导语的 `no_subtitles`**（前端解析 B站后点 AI 功能会自动弹 SESSDATA 粘贴框，保存后自动重试）。提供 SESSDATA 有两条路径：① **前端粘贴（推荐）**：DevTools → Application → Cookies → bilibili.com 复制 SESSDATA 值（HttpOnly，不能用 `document.cookie`），localStorage 持久化；② 后端 `.env` 配 `COOKIES_FILE`（Netscape cookies.txt，宜含 SESSDATA）。⚠️ 高频请求会触发 B站 IP 级风控（残缺/空 URL/跨视频脏字幕，详见坑表 #21-23），冷却 30~60 分钟。
 - 付费为展示占位：不接真实支付、无账户体系、无 DB。
 - 抖音风控具时效性：签名/风控不定期换代，可 `DOUYIN_TIMEOUT_SECONDS` 调超时、`DOUYIN_ENABLED=false` 关停。
 - 前后端同部署、同源；缩略图走本站代理端点的防盗链在 v2 强化。
@@ -195,6 +199,19 @@
 - [x] **首次解析居中**：`:has()` 方案，解析中 768px 居中，完成后恢复分栏。
 - [x] **LLM 偶发 502**：`_chat` 重试 1 次 + `_chat_json` 格式异常重生成 1 次。
 - ✅ 回归：`e2e_features.py` / `e2e_test.py` 全绿无 console 错误；探针：居中/等高/固定/单滚动条/封面/标题 全过。
+
+### M2.7 B站字幕直调官方 API（v0.5.0，已实现 + 回归）
+> yt-dlp 对 B站 AI 字幕(ai-zh)支持不稳：部分视频(need_login_subtitle=True)无登录态时 yt-dlp 拿不到真实字幕 URL 只产出弹幕 XML；长视频 AI 字幕被分段时 yt-dlp 只拿到开头一小段。本期绕过 yt-dlp，直调 B站官方 Web 接口稳定获取完整字幕（含 AI 字幕）。
+- [x] **新建 `app/bili_subtitle.py`**：3 步 API（`view` 拿 cid/aid/duration → `player/v2` 拿字幕列表需 SESSDATA → `subtitle_url` 下 body 免 cookie）；body 数组转**标准 srt**（带时间戳，下游章节/问答零改动复用）；长视频 AI 字幕分段**合并去重**（按 from 排序）；SESSDATA 从前端粘贴或 `COOKIES_FILE`（Netscape）解析。
+- [x] **接口选型（实测反转竞品结论）**：**用 `/x/player/v2` 而非 `player/wbi/v2`**——wbi/v2 带 SESSDATA 必 412（指纹头/完整 cookie/curl_cffi TLS 模拟/WBI 签名均无效），v2 带 SESSDATA 稳定 200。详见 CHANGELOG 0.5.0 踩坑表。
+- [x] **完整浏览器会话 + 克制重试**：调 player 前先访问 B站首页+视频页养 `buvid3/b_nut`，再注入 SESSDATA；subtitle_url 全空时最多重试 3 次（退避 2/5s），不做高频重取（限流期重取只会火上浇油且拿到脏数据）。
+- [x] **脏数据防线（排查"摘要串台"时新增）**：`_ordered_candidates` 按优先级去重排候选轨，**严格按语言逐个尝试、重试只取同 lan，杜绝跨语言偷换**；`_span_plausible` 用视频时长校验字幕跨度（0.35×~1.6×duration），风控期下发的跨视频脏字幕（实测出现过帕尼尼减肥、杨幂等不相干内容）一律拦截，全部不合格则提示重试而非返回错误内容。
+- [x] **`app/downloader.py` 分流**：`extract_subtitle` 入口对 B站优先走直调，失败/`BiliSubtitleError` 回退 yt-dlp（两者结合）；`LoginRequiredError` → 带引导语的 `_SubtitleError`（不回退，yt-dlp 同样拿不到）；`bilibili_subtitle_login_hint` **下沉**到新模块（消除重复）。
+- [x] **`app/routes.py`**：B站**跳过 yt-dlp 无 cookie probe**（其残缺字幕清单曾把选源误导到片头音乐轨）；修复 `/api/ai/summary` 的 `NameError: result`（改为展开 `ai.summarize` 完整 dict）；5 个 AI 端点透传 `bili_sessdata`，缓存 key 拼 sessdata 前 8 位。
+- [x] **前端登录弹窗（验收反馈重构）**：不放导航栏；解析 B站点 AI 功能收到 `no_subtitles` 时**自动弹模态框**，指引从 DevTools Application 面板复制 SESSDATA（HttpOnly，`document.cookie` 读不到），保存到 localStorage 后自动重试；顺带修复 `api()` 未挂 `err.code` 导致弹窗检测失效的 bug。
+- [x] **选源优先级**：人工中文(zh/zh-Hans/zh-Hant) > AI 中文(ai-zh) > 英文(en) > 列表第一条（兼容用户 `req.lang` 指定）。
+- ✅ 验证：mock 单元测试 **61** 项（含脏数据拦截/跨语言不偷换/合格 AI 降级等新增回归）+ 非 B站回归 23 项 + 真实 B站端到端（人工 zh 114 条、AI zh 599 条、summary 全链路 200）+ 风控期脏数据拦截实测，全绿。测试脚本仅本地留存，不入仓。
+- ⚠️ **运维注意**：高频请求会触发 B站 IP 级风控（只下发残缺轨/URL 空/跨视频脏数据），冷却 30~60 分钟恢复；SESSDATA 对 nav 接口有效 ≠ 字幕接口不限流。
 
 ### M3 待办
 - [ ] 部署：反代 + HTTPS + ICP 备案

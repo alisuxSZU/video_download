@@ -209,7 +209,7 @@ async def subtitles(req: SubtitleRequest, request: Request):
     try:
         result = await asyncio.get_running_loop().run_in_executor(
             None,
-            lambda: _extract_subtitle_sync(url, req.lang, req.is_auto, out_dir),
+            lambda: _extract_subtitle_sync(url, req.lang, req.is_auto, out_dir, req.bili_sessdata),
         )
         # 可选翻译
         if req.target_lang:
@@ -227,8 +227,9 @@ async def subtitles(req: SubtitleRequest, request: Request):
         shutil.rmtree(out_dir, ignore_errors=True)
 
 
-def _extract_subtitle_sync(url: str, lang: str, is_auto: bool, out_dir: Path) -> dict:
-    return downloader.extract_subtitle(url, lang, is_auto, out_dir)
+def _extract_subtitle_sync(url: str, lang: str, is_auto: bool, out_dir: Path,
+                            bili_sessdata: str | None = None) -> dict:
+    return downloader.extract_subtitle(url, lang, is_auto, out_dir, bili_sessdata=bili_sessdata)
 
 
 # ---------------- AI 摘要 + 问答 ----------------
@@ -253,31 +254,40 @@ def _cache_set(url: str, ent: dict) -> None:
             _transcript_cache.pop(oldest, None)
 
 
-def _collect_segments_sync(url: str) -> tuple[list[dict], dict]:
+def _collect_segments_sync(url: str, bili_sessdata: str | None = None) -> tuple[list[dict], dict]:
     """提取带时间戳的字幕分段（优先手动字幕，其次自动）并缓存。
 
     返回 (segments, meta)。segments 为 [{start, end, text}, ...]（保留时间轴，
     供章节/思维导图/问答使用）；meta 附带 lang / is_auto / model / used_source。
+
+    缓存 key 含 sessdata 前 8 位，避免用户换登录态后命中旧缓存。
     """
-    cached = _cache_get(url)
+    cache_key = url + (f":{bili_sessdata[:8]}" if bili_sessdata else "")
+    cached = _cache_get(cache_key)
     if cached:
         return cached["segments"], cached["meta"]
 
     out_dir = Path(settings.temp_dir) / "sub" / uuid.uuid4().hex
     try:
-        payload = _probe_blocking(url)
-
-        # 多数平台在解析期就对 probe 暴露字幕清单，走「优先手动」的常规路径。
-        subs = payload.get("subtitles") or []
-        if subs:
-            chosen = downloader._pick_subtitle(subs, None, False) or subs[0]
-            result = downloader.extract_subtitle(url, chosen["lang"], chosen["is_auto"], out_dir)
+        if downloader._is_bilibili(url):
+            # B 站：跳过 yt-dlp 无 cookie 探测。yt-dlp 不带 SESSDATA 探测 B 站拿到的
+            # 字幕清单不可靠（可能只暴露残缺的 ai-zh 分段，甚至仅片头音乐段），会把选源
+            # 误导到「纯音乐」之类的残缺口径。直接走 extract_subtitle —— 内部对 B 站分流到
+            # bili_subtitle.fetch_subtitle，按「人工中文 > AI 中文」优先级 + 完整浏览器会话 +
+            # 限流重试自行选源，稳定拿到完整字幕（实测人工 zh 114 条）。
+            result = downloader.extract_subtitle(url, "", False, out_dir, bili_sessdata=bili_sessdata)
         else:
-            # B 站等平台解析期不暴露字幕（字幕仅在写字幕时出现），probe 会误判「无字幕」。
-            # 此时改走与 /api/subtitles 相同的「写字幕」路径：手动桶 + 不限语言
-            # （extract_subtitle 内部逐条回退），保证「有真字幕就拿到」。仅弹幕(xml)时
-            # extract_subtitle 会因 _finalize 排除 xml 而返回无字幕，诚实降级。
-            result = downloader.extract_subtitle(url, "", False, out_dir)
+            payload = _probe_blocking(url)
+
+            # 多数平台在解析期就对 probe 暴露字幕清单，走「优先手动」的常规路径。
+            subs = payload.get("subtitles") or []
+            if subs:
+                chosen = downloader._pick_subtitle(subs, None, False) or subs[0]
+                result = downloader.extract_subtitle(url, chosen["lang"], chosen["is_auto"], out_dir, bili_sessdata=bili_sessdata)
+            else:
+                # 解析期不暴露字幕的平台：走与 /api/subtitles 相同的「写字幕」路径：
+                # 手动桶 + 不限语言（extract_subtitle 内部逐条回退），保证「有真字幕就拿到」。
+                result = downloader.extract_subtitle(url, "", False, out_dir, bili_sessdata=bili_sessdata)
 
         segments = downloader.subtitle_to_segments(result["content"], result["format"])
         if not segments:
@@ -294,7 +304,7 @@ def _collect_segments_sync(url: str) -> tuple[list[dict], dict]:
             "model": settings.openai_model,
             "used_source": result["source"],
         }
-        _cache_set(url, {"segments": segments, "meta": meta, "ts": time.time()})
+        _cache_set(cache_key, {"segments": segments, "meta": meta, "ts": time.time()})
         return segments, meta
     finally:
         shutil.rmtree(out_dir, ignore_errors=True)
@@ -310,10 +320,13 @@ async def summary(req: SummaryRequest, request: Request):
 
     try:
         segments, meta = await asyncio.get_running_loop().run_in_executor(
-            None, lambda: _collect_segments_sync(url)
+            None, lambda: _collect_segments_sync(url, req.bili_sessdata)
         )
-        result = await ai.summarize(segments, meta)
-        return {"ok": True, **result}
+        data = await ai.summarize(segments, meta)
+        # ai.summarize 返回完整 dict：含 summary(全文 md 字符串)、theme/overview/
+        # key_points/keywords/chapters/mindmap，且已 update(meta)。整体展开返回，
+        # 前端 renderSummary 取 d.summary 渲染 Markdown。
+        return {"ok": True, **data}
     except downloader._SubtitleError as exc:
         return JSONResponse(status_code=502, content={"ok": False, "error": str(exc), "code": "no_subtitles"})
     except ai.LLMError as exc:
@@ -333,7 +346,7 @@ async def chapters(req: ChaptersRequest, request: Request):
 
     try:
         segments, meta = await asyncio.get_running_loop().run_in_executor(
-            None, lambda: _collect_segments_sync(url)
+            None, lambda: _collect_segments_sync(url, req.bili_sessdata)
         )
         chapters = await ai.generate_chapters(segments, meta)
         return {"ok": True, "chapters": chapters, **meta}
@@ -356,7 +369,7 @@ async def mindmap(req: MindmapRequest, request: Request):
 
     try:
         segments, meta = await asyncio.get_running_loop().run_in_executor(
-            None, lambda: _collect_segments_sync(url)
+            None, lambda: _collect_segments_sync(url, req.bili_sessdata)
         )
         mm = await ai.mindmap(segments, meta)
         return {"ok": True, "mindmap": mm, **meta}
@@ -387,7 +400,7 @@ async def ask(req: AskRequest, request: Request):
         yield f"data: {json.dumps({'status': 'preparing'})}\n\n"
         try:
             segments, _meta = await asyncio.get_running_loop().run_in_executor(
-                None, lambda: _collect_segments_sync(url)
+                None, lambda: _collect_segments_sync(url, req.bili_sessdata)
             )
         except downloader._SubtitleError as exc:
             # 出错以 error 帧终止（HTTP 200，走流式错误；不补发 done，否则前端用 done 覆盖失败态）

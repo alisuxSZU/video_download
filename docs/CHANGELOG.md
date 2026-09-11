@@ -1,5 +1,63 @@
 # CHANGELOG — 按里程碑记录的实现进度与决策变更
 
+## [0.5.0] — B站字幕直调官方 API：绕过 yt-dlp 稳定拿 AI 字幕 + 登录弹窗 + 脏数据防线（2026-09-11）
+
+> yt-dlp 对 B站 AI 字幕(`ai-zh`)支持不稳：部分视频(`need_login_subtitle=True`)无登录态时 yt-dlp 拿不到真实字幕 URL 只产出弹幕 XML；长视频 AI 字幕被分段时 yt-dlp 只拿到开头一小段。本期绕过 yt-dlp，直调 B站官方 Web 接口稳定获取完整字幕，并把 body 数组转成标准 srt，下游章节/问答零改动复用。竞品调研见 `docs/PLAN.md` M2.7。
+
+### Added / 新模块 `app/bili_subtitle.py`
+- **3 步 API 流程**（参考 [bilibili-API-collect/docs/video/player.md](https://github.com/SocialSisterYi/bilibili-API-collect) + codecopy.cn/0966wt 实测代码）：
+  1. `GET /x/web-interface/view?bvid=` 拿 `cid/aid/title/duration`（免登录）
+  2. `GET /x/player/v2?aid=&cid=&bvid=` 拿 `data.subtitle.subtitles[]`（**需 SESSDATA**）；`data.need_login_subtitle` 标志免登录可读。
+  3. `GET https:{subtitle_url}` 拿 `{"body":[{from,to,content}]}`（**免 cookie**，url 自带 `auth_key` 时效签名；是协议相对地址 `//aisubtitle.hdslb.com/...` 需补 `https:` 前缀）。
+- **body 数组 → 标准 SRT**（`_body_to_srt`，带 `HH:MM:SS,mmm --> HH:MM:SS,mmm` 时间戳），下游 `subtitle_to_segments`/章节时间轴/AI 问答分钟级定位**零改动复用**。
+- **长视频 AI 字幕分段合并**（`_merge_bodies`）：subtitles 列表里同 `lan` 可能有多条分段，全部下载后按 `from` 时间排序、`(from,to,content)` 去重拼接，不再只拿到开头一小段。
+- **完整浏览器会话**（`_player_subtitle`）：调字幕列表前先用 `httpx.Client` 访问 B站首页 + 视频页养出 `buvid3/b_nut` cookie，再注入 SESSDATA——裸调在限流期会拿到 `subtitle_url` 全空的降级响应；URL 全空时克制重试（最多 3 次，退避 2/5s）。
+- **脏数据防线（核心）**：
+  - `_ordered_candidates` 按「人工中文 > AI 中文 > 英文 > 其他」构造去重候选轨，**严格按语言逐个尝试，重试只取同 lan，绝不跨语言偷换**（旧逻辑 `同lan or 全量列表` 会在人工轨 URL 空时静默换成限流期的脏 AI 轨）。
+  - `_span_plausible` 用 view 接口的视频时长校验字幕时间跨度（须落在 `0.35×duration ~ 1.6×duration`）。实测 B站风控期会下发**别的视频**的字幕（出海视频拿到过"帕尼尼减肥""杨幂回旋镖"），跨度校验识别后跳过该候选，全部不合格则报错提示重试——**宁可不摘要，也不返回跨视频错误内容**。
+- **SESSDATA 解析**（`_load_sessdata`）：从 `settings.cookies_file`（Netscape cookies.txt，与 yt-dlp 共用）解析 `SESSDATA`；无配置/无 SESSDATA 时抛 `LoginRequiredError`。
+- **b23.tv 短链**：`_extract_bvid` 对短链 `httpx.get(follow_redirects=True)` 跟随重定向拿真实 BV。
+- **选源优先级**（`_pick_subtitle`）：人工中文(`zh/zh-Hans/zh-Hant`) > AI 中文(`ai-zh`) > 英文(`en`) > 列表第一条；兼容用户 `req.lang` 指定（精确>语言族近似）。
+
+### Changed / `app/downloader.py`
+- **`extract_subtitle` 入口分流**：B站优先走 `bili_subtitle.fetch_subtitle`，失败(`BiliSubtitleError` 接口抖动/限流) → 回退 yt-dlp 现有逻辑（**两者结合**）；`LoginRequiredError` → 带登录引导语的 `_SubtitleError`（不回退 yt-dlp，yt-dlp 同样拿不到登录态字幕）。
+- **`bilibili_subtitle_login_hint` 下沉重构**：原 downloader.py 里的 view + player 诊断逻辑搬到 `bili_subtitle.login_hint`，downloader 转发调用，**消除重复实现**。
+
+### Changed / `app/routes.py`
+- **B站跳过 yt-dlp probe**：`_collect_segments_sync` 对 B站 URL 不再先做无 cookie 的 yt-dlp 探测（其字幕清单不可靠，曾把选源误导到仅片头音乐的残缺 AI 轨，导致摘要判成"纯音乐"），直接走官方 API 自行选源；其他平台路径不变。
+- **修复 `/api/ai/summary` 500**：`return {"ok": True, **result}` 引用了不存在的变量（NameError）→ 改为展开 `ai.summarize` 的完整返回 dict（含 markdown 字符串 `summary` 及 theme/key_points/chapters/mindmap + meta），与前端 `renderSummary(d.summary)` 契约对齐。
+- 5 个 AI 端点的请求模型透传前端粘贴的 `bili_sessdata`；字幕缓存 key 拼 sessdata 前 8 位（避免换登录态命中旧缓存）。
+
+### Changed / 前端 SESSDATA 登录弹窗
+- **后端**：5 个请求模型加可选 `bili_sessdata: str | None`；`api()` 统一从 localStorage 读取 `vdl_bili_sessdata` 注入请求 body。
+- **交互（按验收反馈重构）**：不再放页面顶部导航栏（按钮点不动且位置突兀）→ 改为**解析 B站视频后点摘要/字幕/章节/思维导图，收到 `no_subtitles` 时自动弹出模态框**，内含获取步骤指引 + 粘贴输入框 +「保存并重试」（保存后 localStorage 持久化并自动重发刚才的请求）。
+- **修复前端错误码丢失**：`api()` 抛错时未把后端 `code` 挂到 Error 对象，导致登录弹窗检测永远不生效——已补齐 `err.code = data.code`。
+
+### ⚠️ 实测踩坑记录（推翻了竞品脚本的若干结论）
+| 坑 | 实测结论 |
+|---|---|
+| **接口选型** | 竞品脚本称"必须用 `player/wbi/v2`，普通 v2 的 AI 字幕 URL 为空"——**2026-09 已反转**：`wbi/v2` 带 SESSDATA 必返回 **412 request was banned**（完整指纹头/完整 cookie 集/curl_cffi 模拟 Chrome TLS/WBI 签名全部无效），而 **`player/v2` 带 SESSDATA 稳定 200 且 subtitle_url 有效**。无 cookie 时两者都返回空字幕列表。 |
+| **SESSDATA 读取** | SESSDATA 是 **HttpOnly cookie**，`document.cookie` 读不到（`copy(document.cookie.match(...))` 必报 null）。正确取法：DevTools → Application → Cookies → bilibili.com → 复制 SESSDATA 的 Value；或 Network 请求头 Cookie 里抠。 |
+| **登录有效性 ≠ 字幕可取** | SESSDATA 对 `/x/web-interface/nav` 有效（能拿到 mid/uname）不代表字幕接口不限流；高频请求会触发 IP 级风控，表现为只下发 1 条残缺轨、URL 空、甚至跨视频脏数据，冷却 30~60 分钟恢复。 |
+| **列表需登录 / 下载免登录** | player 字幕列表必须带 SESSDATA；subtitle_url 自带 auth_key，下载 body 不需要任何 cookie。 |
+
+### Verified
+- ✅ **mock 单元测试 61 项**（`test_bili_subtitle.py`，本地测试文件不入仓）：BV 提取/srt 转换/分段合并/选源/SESSDATA 解析/fetch 主流程/login_hint/downloader 分流集成/回退 + 新增候选排序、时长校验、**人工轨优先不下载脏 AI 轨、脏 AI 被拦截抛错、合格 AI 合理降级**等 18 条断言。
+- ✅ **非 B站回归 23 项**（`test_non_bili_regression.py`）：YouTube 等现有纯函数与分流入口零破坏。
+- ✅ **真实 B站 API 端到端**（有效 SESSDATA）：`BV1mAAmzqEfP` 人工中文 114 条约 5.3k 字符（2.4s）；`BV1sC4y1f7oM` AI 中文 599 条约 26.7k 字符（3.0s）；`/api/ai/summary` 全链路（字幕→DeepSeek→Markdown 摘要）200。
+- ✅ **脏数据拦截实测**：风控期 B站下发 20 条/跨度 54s（视频实为 211s）的跨视频字幕，被 `_span_plausible` 准确拦截并诚实降级。
+- ⚠️ 风控冷却期间点摘要会提示"暂无可用字幕/稍后再试"，属环境限流非代码缺陷。
+
+### 决策（已人工确认）
+| 项 | 决策 |
+|---|---|
+| 技术方向 | **两者结合**：B站走直调官方 API，其他平台仍走 yt-dlp，B站失败回退 yt-dlp |
+| 字幕格式 | body 数组转 **srt**（带时间戳，下游章节/问答零改动复用） |
+| 长视频分段 | **合并**：同 lan 多分段按 from 排序去重拼接 |
+| login_hint | **下沉重构**到 `bili_subtitle.login_hint`，downloader 转发，消除重复 |
+| 登录入口 | 解析 B站点 AI 功能时**自动弹模态框**粘贴 SESSDATA（不放导航栏） |
+| 脏数据 | **时长跨度校验 + 严格按语言降级**，绝不返回跨视频错误内容 |
+
 ## [0.4.1] — 验收反馈修复：布局打磨（等高/内部滚动/头部固定/居中）+ LLM 偶发重试（2026-09-08）
 
 > 主人验收 v0.4.0 时逐条反馈的体验问题（均附截图标注），全部真实浏览器回归通过。

@@ -19,11 +19,20 @@
 
   // ---------- 工具 ----------
   async function api(path, body) {
+    // 自动注入前端粘贴的 B 站 SESSDATA（localStorage 持久化，优先于 COOKIES_FILE）
+    if (body) {
+      const stored = localStorage.getItem("vdl_bili_sessdata");
+      if (stored && !body.bili_sessdata) body.bili_sessdata = stored;
+    }
     const opts = body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {};
     const res = await fetch(path, opts);
     let data = {};
     try { data = await res.json(); } catch (_) { /* 非 JSON */ }
-    if (!res.ok) throw new Error(data.error || "请求失败，请稍后再试");
+    if (!res.ok) {
+      const err = new Error(data.error || "请求失败，请稍后再试");
+      err.code = data.code || "";  // 把后端 error code 挂到 Error 上，前端 catch 可检测
+      throw err;
+    }
     return data;
   }
 
@@ -378,6 +387,11 @@
       toast(translate ? `已翻译成${targetLang}` : "字幕已提取");
     } catch (e) {
       stopBusy();
+      // B 站字幕需登录态 → 弹模态框引导粘贴 SESSDATA，保存后自动重试
+      if (e.code === "no_subtitles" && /B ?站|Bilibili|登录|SESSDATA/i.test(e.message)) {
+        openBiliLoginModal(() => handleSubtitle(translate, true));
+        return;
+      }
       box.textContent = e.message;
       $("#subMeta").textContent = "";
       $("#subDl").classList.add("hidden"); // 出错时不保留旧字幕可下载
@@ -934,7 +948,13 @@
       toast("摘要已生成");
     } catch (e) {
       if (activeUrl() !== url) return;
-      stopBusy(); showError(e.message);
+      stopBusy();
+      // B 站字幕需登录态 → 弹模态框引导粘贴 SESSDATA，保存后自动重试
+      if (e.code === "no_subtitles" && /B ?站|Bilibili|登录|SESSDATA/i.test(e.message)) {
+        openBiliLoginModal(() => handleSummary(true));
+        return;
+      }
+      showError(e.message);
     }
   }
 
@@ -953,7 +973,13 @@
       setCache(url, "chapters", { chapters: d.chapters || [] });
       stopBusy();
       toast("章节时间轴已生成");
-    } catch (e) { stopBusy(); showError(e.message); }
+    } catch (e) {
+      stopBusy();
+      if (e.code === "no_subtitles" && /B ?站|Bilibili|登录|SESSDATA/i.test(e.message)) {
+        openBiliLoginModal(() => handleChapters(true)); return;
+      }
+      showError(e.message);
+    }
   }
 
   async function handleMindmap(force) {
@@ -978,6 +1004,9 @@
       toast("思维导图已生成");
     } catch (e) {
       stopBusy();
+      if (e.code === "no_subtitles" && /B ?站|Bilibili|登录|SESSDATA/i.test(e.message)) {
+        openBiliLoginModal(() => handleMindmap(true)); return;
+      }
       showError(e.message);
       $("#mindContainer").innerHTML = `<span class="text-sm text-slate-400">导图生成失败</span>`;
     }
@@ -1255,6 +1284,47 @@
     const open = body.classList.toggle("open");
     btn.textContent = open ? "收起" : "展开";
   };
+
+  // B 站 SESSDATA 登录模态框：need_login 错误时自动弹出，保存后自动重试
+  // _biliLoginRetry: 保存成功后要重试的函数句柄（handleSummary / handleSubtitle）
+  let _biliLoginRetry = null;
+  function openBiliLoginModal(retryFn) {
+    _biliLoginRetry = retryFn || null;
+    const m = $("#biliLoginModal");
+    const input = $("#biliSessdataInput");
+    // 回显已有值
+    input.value = localStorage.getItem("vdl_bili_sessdata") || "";
+    m.classList.remove("hidden");
+    m.classList.add("flex");
+    setTimeout(() => input.focus(), 50);
+  }
+  function closeBiliLoginModal() {
+    _biliLoginRetry = null;
+    const m = $("#biliLoginModal");
+    m.classList.add("hidden");
+    m.classList.remove("flex");
+  }
+  // 事件绑定
+  (function initBiliLoginModal() {
+    const m = $("#biliLoginModal");
+    if (!m) return;
+    $("#biliLoginSave").onclick = () => {
+      const val = $("#biliSessdataInput").value.trim();
+      if (!val) { toast("请粘贴 SESSDATA"); return; }
+      localStorage.setItem("vdl_bili_sessdata", val);
+      closeBiliLoginModal();
+      toast("✓ 已保存，正在重试…");
+      if (_biliLoginRetry) _biliLoginRetry();  // 自动重试刚才的操作
+    };
+    $("#biliLoginClear").onclick = () => {
+      localStorage.removeItem("vdl_bili_sessdata");
+      $("#biliSessdataInput").value = "";
+      toast("已清除 B 站登录态");
+    };
+    $("#biliLoginCancel").onclick = closeBiliLoginModal;
+    m.addEventListener("click", (e) => { if (e.target.id === "biliLoginModal") closeBiliLoginModal(); });
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeBiliLoginModal(); });
+  })();
 
   // 自动扩容 textarea
   const ta = $("#urlInput");

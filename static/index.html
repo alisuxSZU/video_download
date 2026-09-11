@@ -435,6 +435,35 @@
     </div>
   </div>
 
+  <!-- B 站 SESSDATA 登录模态框：解析 B站视频点摘要/字幕时 need_login 自动弹出 -->
+  <div id="biliLoginModal" class="hidden fixed inset-0 z-[100] items-center justify-center bg-slate-900/40 backdrop-blur-sm">
+    <div class="bg-white rounded-2xl shadow-2xl p-6 max-w-md w-full mx-4 animate-rise">
+      <div class="flex items-center gap-3">
+        <div class="text-3xl">📺</div>
+        <div>
+          <h3 class="font-black text-slate-900 text-lg">需要 B 站登录态</h3>
+          <p class="text-xs text-slate-500 mt-0.5">该视频有 AI 字幕，但需登录才能获取</p>
+        </div>
+      </div>
+      <div class="mt-4 rounded-xl bg-slate-50 p-3 text-xs text-slate-600 leading-relaxed">
+        <div class="font-semibold text-slate-700 mb-1">获取 SESSDATA：</div>
+        <ol class="list-decimal list-inside space-y-0.5">
+          <li>浏览器打开 <a href="https://www.bilibili.com" target="_blank" class="text-brand hover:underline">bilibili.com</a> 并登录</li>
+          <li>按 <kbd class="bg-white border border-slate-300 rounded px-1">F12</kbd> → Console 粘贴执行：</li>
+        </ol>
+        <div class="mt-2 bg-white border border-slate-200 rounded-lg px-3 py-2 font-mono text-brand break-all select-all">copy(document.cookie.match(/SESSDATA=([^;]+)/)[1])</div>
+        <p class="mt-2 text-slate-500">剪贴板里就是你的 SESSDATA，粘贴到下方输入框即可（保存在浏览器本地，不上传服务器）</p>
+      </div>
+      <input id="biliSessdataInput" type="text" placeholder="粘贴 SESSDATA 值..."
+        class="mt-4 w-full rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-brand/50 transition" />
+      <div class="flex gap-2 mt-3">
+        <button id="biliLoginSave" type="button" class="flex-1 rounded-xl bg-brand text-white font-semibold py-2.5 hover:bg-brand-dark transition">保存并重试</button>
+        <button id="biliLoginClear" type="button" class="rounded-xl border border-slate-200 text-slate-500 px-4 py-2.5 hover:border-slate-300 transition">清除</button>
+      </div>
+      <button id="biliLoginCancel" class="mt-2 w-full text-sm text-slate-400 hover:text-slate-600">暂不登录</button>
+    </div>
+  </div>
+
   <!-- Toast -->
   <div id="toast" class="hidden fixed bottom-6 left-1/2 -translate-x-1/2 z-[130] rounded-full bg-slate-900 text-white text-sm font-medium px-5 py-3 shadow-lg"></div>
 

@@ -23,6 +23,10 @@ temp/
 tmp/
 screenshots/
 
+# ---- 本地测试与临时验证脚本（不入仓）----
+/test_*.py
+/_*.py
+
 # ---- 本人工作区的 Claude Code 技能 / 设计资产（非本项目）----
 .agents/
 .claude/

@@ -43,43 +43,11 @@ _BILI_SUBTITLE_LOGIN_HINT = (
 def bilibili_subtitle_login_hint(url: str) -> str:
     """B 站视频若「有字幕但需登录态才下发(need_login_subtitle)」，返回引导语；否则 ''。
 
-    仅在取字幕失败、疑似无字幕时调用（多 1~2 次轻量 API 查询，可接受）。
-    用于把「该视频暂无可用字幕」升级为准确、可操作的消息：避免用户误以为真无字幕，
-    也避免把 B 站登录态的缺席归因成项目 bug。
-    对「真无字幕」(need_login_subtitle=False, subs_count=0) 或非 B 站返回空，不误报。
+    下沉到 bili_subtitle.login_hint（复用 view + player/wbi/v2 的同一套逻辑，
+    消除与直提模块的重复实现）。仅在取字幕失败、疑似无字幕时调用。
     """
-    if not _is_bilibili(url):
-        return ""
-    try:
-        m = re.search(r"(BV[0-9A-Za-z]+)", url)
-        if not m:
-            return ""
-        bvid = m.group(1)
-        headers = {"User-Agent": settings.user_agent, "Referer": "https://www.bilibili.com/"}
-        view = httpx.get(
-            "https://api.bilibili.com/x/web-interface/view",
-            params={"bvid": bvid},
-            headers=headers,
-            timeout=12,
-        )
-        view.raise_for_status()
-        vd = view.json().get("data") or {}
-        aid, cid = vd.get("aid"), vd.get("cid")
-        if not aid or not cid:
-            return ""
-        player = httpx.get(
-            "https://api.bilibili.com/x/player/wbi/v2",
-            params={"bvid": bvid, "cid": cid, "aid": aid},
-            headers=headers,
-            timeout=12,
-        )
-        player.raise_for_status()
-        pd = player.json().get("data") or {}
-        if pd.get("need_login_subtitle"):
-            return _BILI_SUBTITLE_LOGIN_HINT
-        return ""
-    except Exception:
-        return ""
+    from . import bili_subtitle
+    return bili_subtitle.login_hint(url)
 
 
 class DownloadCancelled(Exception):
@@ -548,17 +516,35 @@ def safe_stem(name: str) -> str:
 # =========================================================================
 # 字幕提取
 # =========================================================================
-def extract_subtitle(url: str, lang: str, is_auto: bool, out_dir: Path) -> dict:
+def extract_subtitle(url: str, lang: str, is_auto: bool, out_dir: Path,
+                      bili_sessdata: str | None = None) -> dict:
     """提取指定语言字幕并返回 {lang, source, format, content}。
 
     若用户指定的语言/类型在该视频上不存在（很多视频只有自动字幕、或只有英文），
     则从解析到的可用字幕里自动回退一条，保证「能下就下」。
 
+    bili_sessdata：前端从已登录浏览器粘贴的 SESSDATA，优先于 COOKIES_FILE。
     抖音暂无公开可读字幕(yt-dlp 在其上无签名器),直接返回空文案而非报错。
     """
     out_dir.mkdir(parents=True, exist_ok=True)
     if _is_douyin(url):
         raise _SubtitleError("抖音视频暂不支持字幕提取/摘要")
+
+    # ★ B 站优先走直调官方 API 提字幕（绕过 yt-dlp，稳定拿 AI 字幕 ai-zh + 长视频分段合并）
+    # 失败/无 SESSDATA 时回退 yt-dlp（现有逻辑），两者结合。
+    if _is_bilibili(url):
+        from . import bili_subtitle
+        try:
+            result = bili_subtitle.fetch_subtitle(url, lang, is_auto, sessdata_override=bili_sessdata)
+            if result:
+                return result
+            # 直调返回 None（真无字幕）→ 仍走 yt-dlp 兜底一次，避免误判
+        except bili_subtitle.LoginRequiredError:
+            # 字幕需登录态才下发 → 返回带登录引导语的 no_subtitles（不回退 yt-dlp，yt-dlp 同样拿不到）
+            raise _SubtitleError("该视频暂无可用字幕" + bili_subtitle.login_hint(url))
+        except bili_subtitle.BiliSubtitleError:
+            # 直调失败（接口抖动/限流）→ 回退 yt-dlp
+            logger.warning("B 站字幕直调失败，回退 yt-dlp")
 
     def _extract(use_auto: bool, use_lang: str) -> dict:
         langs = [use_lang] if use_lang else []
