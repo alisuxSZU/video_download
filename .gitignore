@@ -33,6 +33,12 @@ data/
 /test_*.py
 /_*.py
 
+# ---- 内部工作记录与规划（本地保留，不公开）----
+docs/PLAN.md
+docs/CHANGELOG.md
+docs/SECURITY.md
+docs/STRIPE-SETUP.md
+
 # ---- 本人工作区的 Claude Code 技能 / 设计资产（非本项目）----
 .agents/
 .claude/

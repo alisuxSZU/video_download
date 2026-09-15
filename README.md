@@ -49,7 +49,7 @@ cp .env.example .env
 （Windows PowerShell 用 `Copy-Item .env.example .env`）
 
 - 至少填 `OPENAI_API_KEY` 才能用字幕翻译 / AI 摘要（用 DeepSeek 等兼容接口）。
-- 其余默认即可，详见 [docs/SECURITY.md](docs/SECURITY.md) 与 [docs/API.md](docs/API.md)。
+- 其余默认即可，详见 [docs/API.md](docs/API.md)。
 
 ### 4. 启动
 
@@ -96,13 +96,9 @@ app/
 static/
   index.html / app.js / styles.css         # 前端单页（HTML + 逻辑 + 样式）
 docs/            # ★ 方案与设计文档（扩展功能的依据）
-  PLAN.md        # ★ 先读：总方案 + 当前状态 + 关键坑 + 下一步（含原 OVERVIEW/ROADMAP）
   DESIGN.md      # 架构设计详解
   API.md         # 接口契约
-  SECURITY.md    # 安全清单与威胁模型
-  CHANGELOG.md   # 里程碑实现进度
   MEMBERSHIP.md  # 会员购买设计（v0.7.0）
-  STRIPE-SETUP.md # Stripe 运维操作指南：不配置/离线测/真实走单（v0.7.0）
 ```
 
 ---
@@ -138,7 +134,7 @@ docs/            # ★ 方案与设计文档（扩展功能的依据）
 
 ## 注意事项 / 已知坑
 
-1. **单进程运行**：任务在内存中，多 worker 会各自为政。横向扩展需把 job store 换成 Redis（见 [PLAN.md](docs/PLAN.md) 的 v2 池）。
+1. **单进程运行**：任务在内存中，多 worker 会各自为政。横向扩展需把 job store 换成 Redis（v2 规划中的池化方案）。
 2. **平台反爬/登录/地区版权**：抖音走**服务端无头浏览器**（Playwright 复用系统 Chrome，匿名游客会话，无需用户 Cookie / 免浏览器插件），见 `.env` 的 `DOUYIN_*`；X、Instagram、TikTok 多数需 cookies/JS 签名，仍易失败；YouTube 部分需登录/有限制。失败会返回友好中文错误而非崩溃。运营者可用 `COOKIES_FILE` 自测。
    **B 站部分视频的字幕需登录态才下发**（`need_login_subtitle=True`，例如 `BV1pGdsB2Ebq`、`BV1mAAmzqEfP`）。未配 `COOKIES_FILE`（B 站登录 cookie）时，此类视频会返回**带引导语**的 `no_subtitles`（如实告知「确有字幕但需登录态，请配置 COOKIES_FILE」）——项目不会把 B 站**弹幕（danmaku）XML**当作字幕。配置 B 站登录 cookie 后可正常取字稿并生成摘要。
 3. **ffmpeg 缺失**：影响合并高清档与 m3u8 下载；解析阶段会标 `needs_merge`，无 ffmpeg 时前端显示并降级单文件档。
@@ -148,13 +144,13 @@ docs/            # ★ 方案与设计文档（扩展功能的依据）
    pip install -U yt-dlp
    ```
 
-   回归矩阵见 `docs/PLAN.md · 端到端测试`。
+   升级后建议重跑核心链路回归（解析 → 下载 → 字幕 → AI 摘要）。
 
 ---
 
 ## 安全（面向公开上线）
 
-公开运营必须重视。本项目已内置：URL/SSRF 校验（含 `169.254.169.254` 元数据拦截）、滑窗限流（返回 429 + 重试等待）、安全响应头与 CSP、错误统一脱敏（不泄堆栈/绝对路径/完整 URL）、临时文件过期清理、日志脱敏。详单见 [docs/SECURITY.md](docs/SECURITY.md)。
+公开运营必须重视。本项目已内置：URL/SSRF 校验（含 `169.254.169.254` 元数据拦截）、滑窗限流（返回 429 + 重试等待）、安全响应头与 CSP、错误统一脱敏（不泄堆栈/绝对路径/完整 URL）、临时文件过期清理、日志脱敏。
 
 ---
 

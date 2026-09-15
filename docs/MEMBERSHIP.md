@@ -1,7 +1,7 @@
 # MEMBERSHIP — 会员购买（Stripe）设计方案
 
-> 状态：**✅ 已实现（v0.7.0，2026-09-15）**——实现细节与验证见 [CHANGELOG.md](CHANGELOG.md) 0.7.0；运维操作（Stripe 密钥/建价格/CLI 转发/测试卡/离线测试）见 [STRIPE-SETUP.md](STRIPE-SETUP.md)。
-> 技术细节以本文为准，已同步 [DESIGN.md](DESIGN.md) §7 / [API.md](API.md) §12-13 / [SECURITY.md](SECURITY.md) §10 / [CHANGELOG.md](CHANGELOG.md) / [PLAN.md](PLAN.md) M2.10。
+> 状态：**✅ 已实现（v0.7.0，2026-09-15）**。
+> 技术细节以本文为准，已同步 [DESIGN.md](DESIGN.md) §7 / [API.md](API.md) §12-13。
 
 ## 0. 已人工确认的决策
 
@@ -267,7 +267,7 @@ ai_usage             免费用户 AI 每日配额
    - 格式列表 1080p+ 行加 🔒 与置灰，点击拦截弹升级；
    - 字幕「翻译」按钮非 PRO 加锁标，点击弹升级；
    - AI 配额将尽/用尽时按 `pro_required` 弹升级。
-7. `api()` 统一封装：自动附带 `Authorization` 头；401 → 清 token 弹登录；`pro_required` → 开升级弹窗（顺带修复 SECURITY.md 已记录的 `detail` 包裹错误文案丢失缺口）。
+7. `api()` 统一封装：自动附带 `Authorization` 头；401 → 清 token 弹登录；`pro_required` → 开升级弹窗（顺带修复 `detail` 包裹导致错误文案丢失的缺口）。
 
 ---
 
@@ -300,7 +300,7 @@ ai_usage             免费用户 AI 每日配额
 | `app/routes.py` | 新增 `/api/auth/*`、`/api/billing/*`；下载/字幕/AI 端点接入权益拦截 |
 | `app/downloader.py` | format 串支持免费用户 `height<=720` 封顶（入参化，默认不封顶） |
 | `static/index.html` / `static/app.js` / `static/styles.css` | 账户模态、会员导航、支付/会员中心、加锁 UI、支付回跳处理 |
-| `docs/DESIGN.md` `API.md` `SECURITY.md` `CHANGELOG.md` `PLAN.md` | 落地后同步 |
+| `docs/DESIGN.md` `API.md` | 落地后同步 |
 | `e2e_billing.py`（仓库根，按惯例不入仓） | 履约幂等/验签/越权/配额的自动化脚本（直调函数 + TestClient） |
 
 ## 9. 开发与验收步骤（确认后按序执行，每步可独立验证）

@@ -1,7 +1,6 @@
 """抖音视频解析/下载 —— 服务端无头浏览器方案。
 
-为什么不能让 yt-dlp 直跑抖音? 详见 docs/SECURITY.md / docs/CHANGELOG.md:
-  抖音 Web 业务 API(详情/列表/评论)被 a_bogus + msToken 签名墙覆盖,且 a_bogus 已绑定
+为什么不能让 yt-dlp 直跑抖音? 抖音 Web 业务 API(详情/列表/评论)被 a_bogus + msToken 签名墙覆盖,且 a_bogus 已绑定
   浏览器环境指纹(UA/版本/设备参数须在签名时一致),纯 Python 逆向模拟不出真实浏览器,
   f2/yt-dlp 直跑一律失败(缺 cookie/签名)。免 Cookie 直连(video_id→aweme.snssdk.com/v1/play)
   的 SSR 通道已于 2026-08-30 关闭(share 页不再渲染 play_addr.uri)。

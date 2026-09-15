@@ -1,6 +1,6 @@
 # DESIGN — 架构设计详解
 
-> 解释「为什么这么设计」，供扩展时快速理解既有结构。代码以 [app/](../app/) 为准，本文与代码同步。范围与限制见 [PLAN.md](PLAN.md)。
+> 解释「为什么这么设计」，供扩展时快速理解既有结构。代码以 [app/](../app/) 为准，本文与代码同步。
 
 ## 1. 模块与职责
 
@@ -140,7 +140,7 @@ status: queued ─> probing ─> downloading ─> done
 
 ## 7. 账户与支付架构（v0.7.0）
 
-> 完整设计方案（决策/链路/表结构/权益矩阵）见 [MEMBERSHIP.md](MEMBERSHIP.md)；安全专项见 [SECURITY.md](SECURITY.md) §10；接口契约见 [API.md](API.md) §12/§13。此处只讲「为什么这么设计」。
+> 完整设计方案（决策/链路/表结构/权益矩阵）见 [MEMBERSHIP.md](MEMBERSHIP.md)；接口契约见 [API.md](API.md) §12/§13。此处只讲「为什么这么设计」。
 
 **为什么是 Stripe Checkout 托管收银台而非自建收银页 / Elements**：本站全程不接触卡号 → PCI 合规负担最小；前端只传 `plan` 键、金额以后台 Price 为唯一事实源 → 金额无法被篡改；一次性 `mode=payment` 而非订阅 → 免去 dunning/取消/发票复杂度，「重复购买叠加天数」对用户直觉且实现简单（`MAX(当前到期, now) + days`）。
 
@@ -156,7 +156,7 @@ status: queued ─> probing ─> downloading ─> done
 
 ## 8. 安全模型
 
-见 [SECURITY.md](SECURITY.md) 与 [security.py](../app/security.py)。要点：URL/SSRF 校验、滑窗限流、安全响应头+CSP、错误脱敏、临时文件过期清理、日志脱敏；v0.7.0 起新增 `HTTPException` 错误展平（统一 `{ok,error,code}`，前端弹窗/状态清理依赖 `code`）。
+见 [security.py](../app/security.py) 与 [main.py](../app/main.py) 的中间件。要点：URL/SSRF 校验、滑窗限流、安全响应头+CSP、错误脱敏、临时文件过期清理、日志脱敏；v0.7.0 起新增 `HTTPException` 错误展平（统一 `{ok,error,code}`，前端弹窗/状态清理依赖 `code`）。
 
 ## 9. 技术选型理由
 
