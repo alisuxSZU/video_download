@@ -432,7 +432,7 @@
       toast(translate ? `已翻译成${targetLang}` : "字幕已提取");
     } catch (e) {
       stopBusy();
-      if (e.code === "pro_required") { openUpgradeWithMsg(e.message); return; } // 免费额度用完 → 引导升级
+      if (e.code === "pro_required") { panelHint("#subText", e.message); openUpgradeWithMsg(e.message); return; } // 免费额度用完 → 引导升级
       // B 站字幕需登录态 → 弹模态框引导粘贴 SESSDATA，保存后自动重试
       if (e.code === "no_subtitles" && /B ?站|Bilibili|登录|SESSDATA/i.test(e.message)) {
         openBiliLoginModal(() => handleSubtitle(translate, true));
@@ -485,6 +485,18 @@
     let h = "";
     for (let i = 0; i < rows; i++) h += `<div class="skel" style="width:${widths[i % widths.length]}"></div>`;
     return h;
+  }
+
+  // 请求失败/被拦截时清掉骨架屏并给出文案：否则面板会永远停在「加载中」观感
+  // （典型：非 PRO / 免费额度用完 → 弹升级框，用户点「暂不升级」后骨架屏残留）
+  function panelHint(sel, msg) {
+    const el = $(sel);
+    if (!el) return;
+    el.textContent = "";
+    const s = document.createElement("span");
+    s.className = "text-sm text-slate-400";
+    s.textContent = msg || "";
+    el.appendChild(s);
   }
 
   // 单飞守卫：任一 AI 请求进行中时禁用全部功能按钮，避免并发请求交叉清空共享的
@@ -995,12 +1007,13 @@
     } catch (e) {
       if (activeUrl() !== url) return;
       stopBusy();
-      if (e.code === "pro_required") { openUpgradeWithMsg(e.message); return; } // 免费额度用完 → 引导升级
+      if (e.code === "pro_required") { panelHint("#sumMd", e.message); openUpgradeWithMsg(e.message); return; } // 免费额度用完 → 引导升级
       // B 站字幕需登录态 → 弹模态框引导粘贴 SESSDATA，保存后自动重试
       if (e.code === "no_subtitles" && /B ?站|Bilibili|登录|SESSDATA/i.test(e.message)) {
         openBiliLoginModal(() => handleSummary(true));
         return;
       }
+      panelHint("#sumMd", e.message);
       showError(e.message);
     }
   }
@@ -1022,10 +1035,11 @@
       toast("章节时间轴已生成");
     } catch (e) {
       stopBusy();
-      if (e.code === "pro_required") { openUpgradeWithMsg(e.message); return; }
+      if (e.code === "pro_required") { panelHint("#sumChapters", e.message); openUpgradeWithMsg(e.message); return; }
       if (e.code === "no_subtitles" && /B ?站|Bilibili|登录|SESSDATA/i.test(e.message)) {
         openBiliLoginModal(() => handleChapters(true)); return;
       }
+      panelHint("#sumChapters", e.message);
       showError(e.message);
     }
   }
@@ -1052,7 +1066,7 @@
       toast("思维导图已生成");
     } catch (e) {
       stopBusy();
-      if (e.code === "pro_required") { openUpgradeWithMsg(e.message); return; }
+      if (e.code === "pro_required") { panelHint("#mindContainer", e.message); openUpgradeWithMsg(e.message); return; }
       if (e.code === "no_subtitles" && /B ?站|Bilibili|登录|SESSDATA/i.test(e.message)) {
         openBiliLoginModal(() => handleMindmap(true)); return;
       }
