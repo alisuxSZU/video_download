@@ -1161,9 +1161,17 @@
     }
   }
 
+  // AI 问答为 PRO 专属：非 PRO 触发时引导升级（服务端 /api/ai/ask 会二次硬拦截）
+  function askAllowed() {
+    if (isPro()) return true;
+    openUpgradeWithMsg("AI 问答为 PRO 会员专属功能，升级后可针对视频内容自由追问");
+    return false;
+  }
+
   async function handleAsk() {
     const btn = $("#askBtn");
     if (btn.disabled) return; // 正在回答中，忽略重复提交（含再按 Enter）
+    if (!askAllowed()) return;
     const url = activeUrl();
     const q = $("#askInput").value.trim();
     if (!url) { toast("请先解析视频链接"); return; }
@@ -1290,6 +1298,7 @@
     if (!chip || !login || !up) return;
     $("#userEmail").textContent = me ? me.email : "";
     $("#userProBadge").classList.toggle("hidden", !isPro());
+    $("#askProTag").classList.toggle("hidden", isPro()); // 问答 tab 的 PRO 角标对会员隐藏
     chip.classList.toggle("hidden", !me);
     chip.classList.toggle("flex", !!me);
     login.classList.toggle("hidden", !!me);
@@ -1474,7 +1483,7 @@
   $("#sumBtn").onclick = () => handleSummary();      // 不能直接绑定 handleSummary：onclick 会把事件对象当 force 传入导致永远重算
   $("#chaptersBtn").onclick = () => handleChapters();
   $("#mindmapBtn").onclick = () => handleMindmap();
-  $("#askOpenBtn").onclick = () => { hideError(); selectTab("askOpenBtn"); $("#askInput").focus(); };
+  $("#askOpenBtn").onclick = () => { if (!askAllowed()) return; hideError(); selectTab("askOpenBtn"); $("#askInput").focus(); };
   $("#sumCopy").onclick = () => { if (lastSummary) navigator.clipboard.writeText(lastSummary).then(() => toast("摘要已复制")); else toast("请先生成摘要"); };
   $("#sumDownload").onclick = downloadMarkdown;
   $("#askBtn").onclick = handleAsk;

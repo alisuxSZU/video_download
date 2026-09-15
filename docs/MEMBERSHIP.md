@@ -237,7 +237,8 @@ ai_usage             免费用户 AI 每日配额
 | 1080p / 2K / 4K / 高码率 | ❌ 服务端拒绝（见下） | ✅ |
 | 字幕「仅提取」 | ✅ | ✅ |
 | 字幕**翻译**（`target_lang` 非空） | ❌ 403 `pro_required` | ✅ |
-| AI 摘要 / 章节 / 思维导图 / 问答 | ✅ **每日 3 次**（游客按 IP、免费账户按 user_id） | ✅ 不限次 |
+| AI 摘要 / 章节 / 思维导图 | ✅ **每日 3 次**（游客按 IP、免费账户按 user_id） | ✅ 不限次 |
+| AI **问答**（`/api/ai/ask`） | ❌ 403 `pro_required` | ✅ 不限次 |
 | AI 限流桶（每分钟） | 沿用 `RATE_AI_PER_MIN`（默认 30） | `RATE_AI_PRO_PER_MIN`（默认 60，可配） |
 
 后端落点：
@@ -246,8 +247,9 @@ ai_usage             免费用户 AI 每日配额
    - 非 PRO 且所选格式 `height > 720` → 403 `pro_required`（格式列表仍照常返回，由前端给 1080p+ 打锁标）。
    - 非 PRO 且未指定格式（走"默认最佳"）→ 在 yt-dlp format 串中强制压到 `[height<=720]`（防止自动选出 4K 绕过）。
 2. **字幕翻译**：`POST /api/subtitles` 当 `target_lang` 非空且非 PRO → 403 `pro_required`。
-3. **AI 每日配额**：summary / chapters / mindmap / ask 四处，成功调用后对 `ai_usage` UPSERT 计数；非 PRO 当日第 4 次起 → 403 `pro_required`（响应带 `ai_used_today/ai_daily_limit`）。PRO 不计数、不限日次数（分钟级限流仍生效）。
-4. 所有 `pro_required` 响应体：`{"ok":false,"error":"该功能为 PRO 会员专属…","code":"pro_required"}`，前端收到统一弹升级弹窗。
+3. **AI 每日配额**：summary / chapters / mindmap 三处，成功调用后对 `ai_usage` UPSERT 计数；非 PRO 当日第 4 次起 → 403 `pro_required`（响应带 `ai_used_today/ai_daily_limit`）。PRO 不计数、不限日次数（分钟级限流仍生效）。
+4. **AI 问答**：`POST /api/ai/ask` 非 PRO 直接 403 `pro_required`（**不消耗**每日免费池；问答按次成本高于摘要，故设为会员专属）。限流仍按 PRO/非 PRO 分桶。
+5. 所有 `pro_required` 响应体：`{"ok":false,"error":"该功能为 PRO 会员专属…","code":"pro_required"}`，前端收到统一弹升级弹窗。
 
 ---
 

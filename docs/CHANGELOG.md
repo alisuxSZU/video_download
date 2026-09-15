@@ -39,6 +39,7 @@
 - `app/main.py`：启动时 `db.init_db()`。
 - `requirements.txt`：新增 `stripe>=11.0`。
 - `.env.example`：新增「会员账户 / Stripe 支付」配置段。
+- **AI 问答（`/api/ai/ask`）改为 PRO 专属**：非 PRO（含游客）直接 403 `pro_required`，**不再消耗**每日免费 AI 配额（摘要/章节/思维导图仍为每日 3 次免费）。前端问答 Tab 加 👑 PRO 角标、`askAllowed()` 前置引导升级；定价卡 PRO 新增「AI 问答（不限次）」、免费档标注「✕ AI 问答」。权益矩阵见 [MEMBERSHIP.md §5](MEMBERSHIP.md)。
 
 ### Fixed（v0.7.0 开发中发现）
 - **`HTTPException` 错误格式不一致（真 BUG）**：FastAPI 默认把 `detail` 包成 `{"detail":{...}}`，而前端 `api()` 只读 `data.error/data.code` → 401 `login_required`（令牌失效不清游客态）、403 `pro_required`（升级弹窗不弹）、429 的真实文案全部丢失。修：`app/security.py` 注册 `HTTPException` 处理器，dict detail **展平**为统一 `{"ok":false,error,code}`（headers 如 429 `Retry-After` 透传）；原 SECURITY.md「已确认缺口 #4」闭环。

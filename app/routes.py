@@ -587,7 +587,12 @@ async def mindmap(req: MindmapRequest, request: Request):
 @router.post("/ai/ask")
 async def ask(req: AskRequest, request: Request):
     """对视频内容追问（SSE 流式）。逐 token 推送答案，前端据此拼接显示。"""
-    user = await _ai_gate(request)
+    # 问答为 PRO 专属：非 PRO 直接 403，不占用每日免费 AI 配额（摘要/章节/导图仍走 _ai_gate）
+    user = auth.user_from_request(request)
+    limit = settings.ai_pro_rate_per_min if auth.is_pro(user) else settings.ai_rate_per_min
+    await _rate(request, "ai", limit)
+    if not auth.is_pro(user):
+        return _pro_required("AI 问答为 PRO 会员专属功能，升级后可针对视频内容自由追问")
     try:
         url = validate_url(req.url)
     except Exception as exc:
@@ -620,11 +625,6 @@ async def ask(req: AskRequest, request: Request):
             # 出错时以 error 帧终止，不补发 done：否则前端会用 done 覆盖「出错」状态，把失败显示成无回答。
             yield f"data: {json.dumps({'error': str(exc)})}\n\n"
             return
-        # 回答成功生成才计免费配额（no_subtitles / LLM 失败不计）
-        try:
-            _consume_ai(user, request)
-        except Exception:  # 配额计数失败不应影响已成功的回答
-            logger.exception("ai quota consume failed")
         yield f"data: {json.dumps({'done': True})}\n\n"
 
     # Cache-Control/X-Accel-Buffering：阻止 nginx 等反向代理把 SSE 缓冲到收尾才一次吐出，确保逐帧流式下发。

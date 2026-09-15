@@ -237,6 +237,7 @@ Base URL：`http://<host>:<port>`（默认 `8000`）。
 请求：`{"url":"...","question":"核心观点是什么？","history":[{"role":"user","content":"..."}]}`
 
 - `history`：可选，`[{role, content}, ...]`，前端维护（最近 6 条拼进上下文）；无则独占问答。
+- ⚠️ **PRO 专属**：非 PRO（游客 / 免费账户）请求直接返回 **403 `{"ok":false,"code":"pro_required","error":"AI 问答为 PRO 会员专属功能…"}`**（不消耗每日免费 AI 配额）；前端 `askAllowed()` 已前置引导升级。
 
 响应：`Content-Type: text/event-stream`。每帧 `data: <JSON>`，事件序列形式如下：
 
