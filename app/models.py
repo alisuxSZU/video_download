@@ -15,6 +15,15 @@ from pydantic import BaseModel
 
 
 # ---------- 请求体 ----------
+class AuthRequest(BaseModel):
+    email: str
+    password: str
+
+
+class CheckoutRequest(BaseModel):
+    plan: str  # month | year（服务端套餐表校验）
+
+
 class ParseRequest(BaseModel):
     url: str
 
@@ -96,6 +105,8 @@ class Job:
     filepath: str = ""  # 服务端绝对路径(绝不下发前端)
     filesize: int = 0
     error: str = ""  # 友好中文错误
+    error_code: str = ""  # 机器码（如 pro_required），前端据此弹升级
+    max_height: int = 0  # 免费用户清晰度封顶（0=不限制，PRO）
     subtitles: list[dict[str, Any]] = field(default_factory=list)
     created_at: float = field(default_factory=time.time)
     expires_at: float = 0.0
@@ -131,5 +142,6 @@ class Job:
                 "filename": self.filename,
                 "filesize": self.filesize,
                 "error": self.error,
+                "error_code": self.error_code,
                 "subtitles": self.subtitles,
             }

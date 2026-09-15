@@ -54,6 +54,14 @@ class DownloadCancelled(Exception):
     """主动取消。"""
 
 
+class ProRequiredDownloadError(Exception):
+    """免费用户选择了超出封顶（默认 720p）的清晰度 → PRO 专属（v0.7.0）。
+
+    在 probe 之后、真正下载之前由 build_format_string 抛出，任务层映射为
+    error_code=pro_required 的友好中文错误；服务端兜底，前端锁标仅为 UX。
+    """
+
+
 # 平台风控/限速/连接抖动特征字符串 —— 命中即重试（B站等的 412/SSL 重置是间歇性抖动，重试可自愈）
 _ANTIBOT_MARKERS = (
     "http error 412",
@@ -352,8 +360,17 @@ def _pick_subtitle(available: list[dict], preferred_lang: str | None, is_auto: b
 # =========================================================================
 # 下载（后台线程执行）
 # =========================================================================
-def build_format_string(info: dict, format_id: str | None, needs_merge: bool) -> str:
-    """根据用户选择的 format 构建 yt-dlp 的 format 选择表达式。"""
+def build_format_string(
+    info: dict,
+    format_id: str | None,
+    needs_merge: bool,
+    max_height: int = 0,
+) -> str:
+    """根据用户选择的 format 构建 yt-dlp 的 format 选择表达式。
+
+    max_height>0（免费用户，默认 720）：所选档位高于封顶抛 ProRequiredDownloadError；
+    未显式选档（默认最佳）时用 [height<=N] 表达式压顶，防止自动选出 1080p/4K 绕过权益。
+    """
     formats = info.get("formats") or []
     chosen = None
     if format_id:
@@ -363,10 +380,21 @@ def build_format_string(info: dict, format_id: str | None, needs_merge: bool) ->
                 break
 
     if chosen is None:
-        # 未选择或找不到 -> 有 ffmpeg 用最佳，否则最佳渐进 mp4
+        # 未选择或找不到 -> 有 ffmpeg 用最佳，否则最佳渐进 mp4；免费用户强制清晰度封顶
+        if max_height:
+            cap = f"[height<={max_height}]"
+            if ffmpeg_available():
+                return f"bestvideo{cap}+bestaudio/best{cap}/best"
+            return f"best{cap}[ext=mp4]/best{cap}/best"
         if ffmpeg_available():
             return "bestvideo+bestaudio/best"
         return "best[ext=mp4]/best"
+
+    # 权益兜底：明确选择了高于封顶的档位（前端虽已加锁，服务端必须独立拒绝）
+    if max_height and _height(chosen) and _height(chosen) > max_height:
+        raise ProRequiredDownloadError(
+            f"{_height(chosen)}p 为 PRO 会员专属清晰度，免费账户最高 {max_height}p"
+        )
 
     if _is_audio_only(chosen):
         return str(chosen.get("format_id"))
@@ -408,7 +436,7 @@ def run_download(job, info: dict):
         _resolve_output(job, job_dir)
         return
 
-    format_str = build_format_string(info, job.format_id, job.needs_merge)
+    format_str = build_format_string(info, job.format_id, job.needs_merge, getattr(job, "max_height", 0))
     job.set_progress(status="downloading", ext=job.ext or info.get("ext") or "mp4")
 
     job_dir = Path(settings.temp_dir) / job.id

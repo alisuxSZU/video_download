@@ -24,6 +24,15 @@ Base URL：`http://<host>:<port>`（默认 `8000`）。
 | `rate_limited_by_platform` | 429 | 被目标平台限速 |
 | `timeout` | 504 | 请求超时 |
 | `thumbnail` | 502 | 封面图加载失败 |
+| `invalid_email` | 400 | 邮箱格式不正确 |
+| `weak_password` | 400 | 密码强度不足（8~128 位） |
+| `email_taken` | 409 | 邮箱已注册 |
+| `invalid_credentials` | 401 | 邮箱或密码错误（不区分账号是否存在，防枚举） |
+| `login_required` (auth) | 401 | 账户端点需要登录（令牌缺失/失效） |
+| `pro_required` | 403 | 该能力为 PRO 专属：1080p+ 下载 / 字幕翻译 / AI 超出每日免费额度（响应带 `ai_used_today`/`ai_daily_limit`） |
+| `invalid_plan` | 400 | 套餐键非法（仅 `month`/`year`） |
+| `billing_disabled` | 503 | Stripe 未配置完整（密钥/价格缺一即关闭），前端展示「即将上线」 |
+| `checkout_failed` | 502 | 创建 Stripe Checkout 会话失败（网络/密钥问题） |
 | `unknown` | 502 | 兜底未知错误 |
 | `internal` | 500 | 服务器内部错误 |
 
@@ -254,14 +263,89 @@ data: {"done": true}          # 正常结束
 
 > ⚠️ **AI 限流**：`/api/ai/summary`、`/api/ai/chapters`、`/api/ai/mindmap`、`/api/ai/ask` 与 `/api/subtitles`（字幕提取/翻译）共用**同一限流组 `ai`**，默认 `RATE_AI_PER_MIN=30`（每 IP 每分钟）。普通用户一次连点多个 AI 功能 + 问几个问题（~10 次/分钟）不会被打断；但仍保留刷量拦截（脚本/爬虫 60 秒内连点三十多次会触发 `429 rate_limited`）。如需更宽松/更严格可在 `.env` 调 `RATE_AI_PER_MIN`。
 
+## 12. 账户：注册 / 登录 / 退出 / 当前用户（v0.7.0）
+
+鉴权方式：登录成功后返回**不透明令牌**（明文只出现一次），前端存 localStorage，此后请求带 `Authorization: Bearer <token>`。令牌服务端可吊销（登出即删），库中仅存 SHA-256 哈希。
+
+### POST `/api/auth/register`
+
+请求：`{"email": "a@b.com", "password": "≥8位"}`（邮箱小写归一）
+
+响应 200：`{"ok": true, "token": "...", "user": {...}}`（注册即自动登录）
+
+错误：400 `invalid_email` / `weak_password`；409 `email_taken`；429 限流（`RATE_AUTH_PER_MIN`，默认 5/分钟/IP）。
+
+### POST `/api/auth/login`
+
+请求：`{"email": "...", "password": "..."}`
+
+响应 200：同 register。
+
+错误：401 `invalid_credentials`（**账号不存在与密码错误返回同一文案**，防邮箱枚举）；429 限流。
+
+### POST `/api/auth/logout`
+
+需要登录（Bearer）。吊销当前令牌。`→ 200 {"ok": true}`（幂等：令牌无效也 200）。
+
+### GET `/api/auth/me`
+
+**可选登录，不报错**。全站启动与支付回跳后用它刷新状态。
+
+- 未登录：`→ {"ok": true, "user": null, "is_pro": false, "ai_used_today": 0, "ai_daily_limit": 3, "free_max_height": 720}`（游客按 IP 统计 AI 配额）
+- 已登录：`{"ok": true, "user": {"email", "member_expire_at"(秒级时间戳或 null), "is_pro", "ai_used_today", "ai_daily_limit"}, "free_max_height": 0}`（PRO 不封顶返回 0，免费返回 `FREE_MAX_HEIGHT`）
+
+## 13. 支付：Checkout / Webhook / 订单（v0.7.0，Stripe Checkout 一次性付款）
+
+### POST `/api/billing/checkout`
+
+需要登录。请求：`{"plan": "month" | "year"}`（仅此两键，金额/天数由服务端套餐表决定，前端无法指定）
+
+响应 200：`{"ok": true, "order_id": "...", "url": "https://checkout.stripe.com/..."}` → 前端 `location.href = url` 跳 Stripe 托管收银台。
+
+- 会员为**一次性购买**：月卡=30 天、年卡=365 天，重复购买**叠加**天数（非订阅）。
+- 后端先建 `pending` 本地订单（幂等基石），再创建 Checkout Session（`client_reference_id=order_id`），回写 `stripe_session_id`。
+- 错误：401 未登录；400 `invalid_plan`；503 `billing_disabled`（Stripe 未配置完整）；502 `checkout_failed`；429 限流（`RATE_BILLING_PER_MIN`）。
+
+### POST `/api/billing/stripe/webhook`
+
+Stripe 服务器回调（**不开放给普通用户**）。用 `whsec_` 密钥对**原始字节体**验签，失败 400。开通会员的**唯一可信依据**（`success_url` 回跳仅 UX 展示，绝不据此履约）。
+
+处理事件：
+
+| 事件 | 处理 |
+|---|---|
+| `checkout.session.completed` | 履约：订单 pending→paid（条件更新）+ 叠加会员时长 |
+| `checkout.session.async_payment_succeeded` | 同上（3DS 异步成功） |
+| `checkout.session.async_payment_failed` | 订单标记 `failed` |
+| `checkout.session.expired` | 订单标记 `expired` |
+| 其他 | 记录后 200（避免无意义重试） |
+
+幂等三层（详见 [MEMBERSHIP.md](MEMBERSHIP.md) §3.4）：`stripe_session_id` UNIQUE / `event_id` 主键去重 / 订单状态机条件更新——同一事件重放、并发回调均只生效一次。非 2xx 时 Stripe 按策略重试（履约失败返回 500 并清掉事件占位，重试可重新处理）。
+
+### GET `/api/billing/orders`
+
+需要登录。返回本人最近 50 笔订单（越权隔离：强制 `WHERE user_id=当前用户`）：
+
+```json
+{"ok": true, "orders": [{"order_id", "plan_key", "amount_cents", "currency", "status", "created_at", "paid_at"}]}
+```
+
+`status`：`pending | paid | failed | expired`。
+
+### PRO 权益拦截（作用于既有端点）
+
+| 端点 | 非 PRO 行为 |
+|---|---|
+| POST `/api/download`、`/api/download/batch` | 所选格式 `height > FREE_MAX_HEIGHT`（默认 720）→ 403 `pro_required`；未指定格式（默认最佳）→ 服务端强制压到 `[height<=720]` 防绕过 |
+| POST `/api/subtitles`（`target_lang` 非空） | 403 `pro_required`（仅提取免费） |
+| AI 四端点 | 非 PRO 每日超过 `AI_FREE_DAILY_LIMIT`（默认 3，游客按 IP、账户按 user_id）→ 403 `pro_required`（响应带 `ai_used_today`/`ai_daily_limit`）；PRO 走独立更高分钟限流 `RATE_AI_PRO_PER_MIN` |
+
+`pro_required` 统一响应：`{"ok":false,"error":"...","code":"pro_required"}`，前端弹升级弹窗。
+
 ## 错误格式
 
-无非标准 JSON 错误都会形如 `{"ok":false,"error":"<友好中文>","code":"<机器码>"}`，但外层包裹有两类：
+所有非标准 JSON 错误统一形如 `{"ok":false,"error":"<友好中文>","code":"<机器码>"}`：
 
-- **JSONResponse 直接返回**（大多数端点的手工 `return JSONResponse(...)`）：扁平 `{"ok":false,error,code}`。
-- **HTTPException 抛出的**（路由内 `raise HTTPException(429/503/400/404/409/410)`）：被 FastAPI 默认处理器包一层 `detail`：
-  ```json
-  {"detail": {"ok": false, "error": "...", "code": "..."}}
-  ```
-
-> 前端 `static/app.js` 的 `api()` 仅读 `data.error`（不读 `data.detail?.error`），因此 `detail` 包裹的错误会落到「请求失败，请稍后再试」通用文案，丢失真实信息 —— 已知缺口，后续可在 `api()` 兼容 `data.detail?.error`。
+- **JSONResponse 直接返回**（大多数端点的手工 `return JSONResponse(...)`）：扁平结构。
+- **HTTPException 抛出的**（401 未登录 / 403 pro_required / 404 任务不存在 / 429 限流等）：v0.7.0 起由自定义处理器**展平为同一扁平结构**（`app/security.py` 注册 `HTTPException` 处理器，dict detail 直接作为响应体，headers 如 429 的 `Retry-After` 透传）——此前 FastAPI 默认包成 `{"detail":{...}}` 导致前端丢失真实文案（已修复）。
+- 请求体 Pydantic 校验失败仍为 FastAPI 默认 422 `{"detail":[...]}`（开发期信号，前端不可触发）。

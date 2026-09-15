@@ -6,19 +6,23 @@
 
 ```
 app/
-  main.py        # FastAPI 入口、lifespan(启动清旧临时文件+后台清理)、安全中间件、挂载 /static、/ 返回 index.html
-  config.py      # 从 .env 读取的 Settings 单例（集中配置）
+  main.py        # FastAPI 入口、lifespan(启动清旧临时文件+建库+后台清理)、安全中间件、挂载 /static、/ 返回 index.html
+  config.py      # 从 .env 读取的 Settings 单例（集中配置；含 Stripe 套餐表与 billing_enabled 推导）
   models.py      # Pydantic 请求体 + Job 数据类(dataclass + threading.Lock)
-  security.py    # validate_url(URL/SSRF校验)、RateLimiter(滑窗限流)、安全响应头、错误脱敏、sanitize_filename、全局异常
-  downloader.py  # yt-dlp 薄封装：probe/build_format_string/run_download/progress_hook/extract_subtitle/subtitle_to_text + 抖音路由
+  security.py    # validate_url(URL/SSRF校验)、RateLimiter(滑窗限流)、安全响应头、错误脱敏、sanitize_filename、全局异常（含 HTTPException 错误展平）
+  downloader.py  # yt-dlp 薄封装：probe/build_format_string/run_download/progress_hook/extract_subtitle/subtitle_to_text + 抖音路由 + 免费清晰度封顶
   tasks.py       # 内存 job store + ThreadPoolExecutor + 总量上限 MAX_ACTIVE_JOBS + 后台 TTL 清理 + 取消
   ai.py          # OpenAI 兼容 LLM：translate + 结构化摘要(单次/分块map-reduce+导图派生) + SSE流式问答
   douyin.py      # 抖音特例：Playwright 无头浏览器解析 + httpx 直连下载
+  db.py          # SQLite 数据层（v0.7.0）：users/auth_tokens/orders/webhook_events/ai_usage + WAL + BEGIN IMMEDIATE 写事务
+  auth.py        # 账户与会话（v0.7.0）：PBKDF2 密码 / 不透明令牌(仅存哈希) / is_pro / AI 日配额
+  billing.py     # Stripe 支付（v0.7.0）：Checkout 下单 / Webhook 验签与事件去重 / 幂等履约
   routes.py      # 全部 API 端点（纯 HTTP 层，不含业务）
 static/          # index.html / app.js / styles.css（单页前端，Tailwind CDN，零构建）
+data/            # vdl.db（SQLite，gitignore）
 ```
 
-**分层**：`routes`(HTTP) → `tasks`(状态中心) → `downloader`(yt-dlp) / `ai`(LLM) / `douyin`(抖音)；`security` 为横切面。downloader 可脱离 HTTP 独立用于脚本。
+**分层**：`routes`(HTTP) → `tasks`(状态中心) → `downloader`(yt-dlp) / `ai`(LLM) / `douyin`(抖音)；`security` 为横切面；`db → auth/billing` 为账户支付纵切（v0.7.0）。downloader 可脱离 HTTP 独立用于脚本。
 
 ## 2. 数据流（端到端）
 
@@ -134,17 +138,34 @@ status: queued ─> probing ─> downloading ─> done
 
 > v1 的 `ai.summarize(text)`（单次、无时间轴）仍保留 `_collect_transcript_sync` 在 routes 内（未被调用，留作回归/对比），当前摘要端点已升级为分段版。
 
-## 7. 安全模型
+## 7. 账户与支付架构（v0.7.0）
 
-见 [SECURITY.md](SECURITY.md) 与 [security.py](../app/security.py)。要点：URL/SSRF 校验、滑窗限流、安全响应头+CSP、错误脱敏、临时文件过期清理、日志脱敏。
+> 完整设计方案（决策/链路/表结构/权益矩阵）见 [MEMBERSHIP.md](MEMBERSHIP.md)；安全专项见 [SECURITY.md](SECURITY.md) §10；接口契约见 [API.md](API.md) §12/§13。此处只讲「为什么这么设计」。
 
-## 8. 技术选型理由
+**为什么是 Stripe Checkout 托管收银台而非自建收银页 / Elements**：本站全程不接触卡号 → PCI 合规负担最小；前端只传 `plan` 键、金额以后台 Price 为唯一事实源 → 金额无法被篡改；一次性 `mode=payment` 而非订阅 → 免去 dunning/取消/发票复杂度，「重复购买叠加天数」对用户直觉且实现简单（`MAX(当前到期, now) + days`）。
+
+**为什么「履约只信 Webhook、不信 success_url」**：浏览器回跳可被用户关闭/伪造/丢失（支付成功后关页面 = 永远拿不到会员）；Webhook 是 Stripe 服务器对服务器的签名回调，可重放验证。前端在 `?pay=success` 后轮询 `/api/auth/me` 只是**展示层**等待，权益以 Webhook 履约结果为准。
+
+**为什么三层幂等**（`stripe_session_id` UNIQUE / `event_id` 主键 / 订单状态机条件更新）：Stripe 官方明确 Webhook 会**重复且乱序**投递；仅靠一层在并发/崩溃恢复下会重复加时长。三层各挡一类：UNIQUE 挡一个会话两订单、event 主键挡事件重放、`UPDATE ... WHERE status='pending'` 条件更新（`BEGIN IMMEDIATE` 事务内）挡并发回调——履约代码执行 N 次也只生效 1 次。履约失败删事件占位 + 返 500 让 Stripe 重试，可恢复。
+
+**为什么 SQLite 而非 Postgres/MySQL**：契合 `--workers 1` 单进程部署（内存 job store 同理）；零额外服务、运维成本为零；写并发用「单连接 + Lock + `BEGIN IMMEDIATE`」串行化（本站写频率低：注册/下单/履约/配额计数）。多实例横扩时才需换 Redis/SQL（PLAN v2 池）。
+
+**为什么不透明令牌而非 JWT**：服务端可主动吊销（登出即删行）、每次请求可查实时会员状态；无 JWT 过期/撤销难题。代价是每请求一次库查询（SQLite 本地读，代价可忽略）。
+
+**权益拦截在服务端而非前端**：前端锁标（1080p+ 👑）只是 UX；真正的强制在 `POST /api/download`（格式 height 校验 + 默认格式串压制 `[height<=720]` 防绕过）、`/api/subtitles`（翻译 403）、AI 端点（日配额 `ai_usage` 按游客 IP / 账户 ID 双口径，成功调用才计数）。PRO 判定 `member_expire_at > now` 单一来源。
+
+## 8. 安全模型
+
+见 [SECURITY.md](SECURITY.md) 与 [security.py](../app/security.py)。要点：URL/SSRF 校验、滑窗限流、安全响应头+CSP、错误脱敏、临时文件过期清理、日志脱敏；v0.7.0 起新增 `HTTPException` 错误展平（统一 `{ok,error,code}`，前端弹窗/状态清理依赖 `code`）。
+
+## 9. 技术选型理由
 
 | 选择 | 理由 |
 |---|---|
 | yt-dlp | 十几万 Star、全平台维护频繁、功能最全 → 「站在巨人肩膀上」 |
 | FastAPI + uvicorn | 异步、Pydantic 校验、原生 Swagger、极轻 |
-| 内存 job store | v1 无 DB、无账户、单机；横扩需 Redis（PLAN v2 池） |
+| 内存 job store + SQLite 账户库 | 下载任务 ephemeral 存内存即可；账户/订单/会员需持久化 → SQLite 零运维（v0.7.0）；横扩需 Redis（PLAN v2 池） |
 | 轮询（非 WebSocket） | 最简、无长连接、天然兼容无状态部署 |
 | 前端静态 HTML + Tailwind CDN | 零构建、零依赖、打开即用；符合参考站风格 |
 | 前端解析 + 后端 API 分离 | 前后端清晰，后续可拆独立前端 |
+| Stripe Checkout + Python SDK | 托管收银台免 PCI 负担；官方 SDK 处理签名/类型；一次性 payment 模式最简（v0.7.0） |

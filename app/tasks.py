@@ -17,6 +17,7 @@ from concurrent.futures import ThreadPoolExecutor
 from .config import settings
 from .downloader import (
     DownloadCancelled,
+    ProRequiredDownloadError,
     _extract_info,
     _is_progressive,
     _is_audio_only,
@@ -44,8 +45,8 @@ _background: set[asyncio.Task] = set()  # 阻止后台任务被 GC
 
 
 # ---------------- Job 生命周期 ----------------
-def create_job(url: str, format_id: str | None = None) -> Job:
-    job = Job(url=url, format_id=format_id or "", needs_merge=False)
+def create_job(url: str, format_id: str | None = None, max_height: int = 0) -> Job:
+    job = Job(url=url, format_id=format_id or "", needs_merge=False, max_height=max_height)
     job.expires_at = time.time() + settings.file_ttl_seconds
     with _JOBS_LOCK:
         JOBS[job.id] = job
@@ -107,6 +108,10 @@ def _blocking_run(job_id: str) -> None:
         run_download(job, info)
     except DownloadCancelled:
         job.set_progress(status=JobStatus.CLOSED)
+    except ProRequiredDownloadError as exc:
+        # 免费用户选了 PRO 专属清晰度：probe 之后下载之前拦截，错误带机器码供前端弹升级
+        logger.info("pro required for job_id=%s: %s", job_id, exc)
+        job.set_progress(status=JobStatus.ERROR, error=str(exc), error_code="pro_required")
     except Exception as exc:  # noqa: BLE001
         logger.exception("download failed job_id=%s", job_id)
         msg = friendly_error(exc, job.url)

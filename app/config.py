@@ -41,7 +41,7 @@ def _float(v: str | None, default: float) -> float:
 class Settings:
     host: str = os.getenv("HOST", "0.0.0.0")
     port: int = _int(os.getenv("PORT"), 8000)
-    version: str = "0.6.1"
+    version: str = "0.7.0"
 
     # ---- 下载 / 临时文件 ----
     # 尽量用短路径，规避 Windows 260 长度限制
@@ -69,6 +69,37 @@ class Settings:
     # ---- GEO（AI 搜索引擎优化）----
     # IndexNow key（Bing/ChatGPT 搜索源主动推送验证）；未配置时不暴露验证路由。
     indexnow_key: str = os.getenv("INDEXNOW_KEY", "").strip()
+
+    # ---- 会员账户 / Stripe 支付（v0.7.0）----
+    # SQLite 库文件（持久化订单/会员/令牌；零额外服务，契合单 worker 部署）
+    db_path: Path = BASE_DIR / "data" / "vdl.db"
+    stripe_secret_key: str | None = os.getenv("STRIPE_SECRET_KEY") or None
+    stripe_webhook_secret: str | None = os.getenv("STRIPE_WEBHOOK_SECRET") or None
+    stripe_price_month: str | None = os.getenv("STRIPE_PRICE_MONTH") or None
+    stripe_price_year: str | None = os.getenv("STRIPE_PRICE_YEAR") or None
+    # 注册/登录 与 创建支付会话 的独立限流（每 IP 每分钟，防爆破/刷单）
+    auth_rate_per_min: int = _int(os.getenv("RATE_AUTH_PER_MIN"), 5)
+    billing_rate_per_min: int = _int(os.getenv("RATE_BILLING_PER_MIN"), 5)
+    # 非 PRO 每日 AI 调用上限（游客按 IP、免费账户按 user_id）；PRO 不限日次数
+    ai_free_daily_limit: int = _int(os.getenv("AI_FREE_DAILY_LIMIT"), 3)
+    # PRO 每分钟 AI 限流（高于免费桶）
+    ai_pro_rate_per_min: int = _int(os.getenv("RATE_AI_PRO_PER_MIN"), 60)
+    # 免费用户可选的最大视频高度（像素）；1080p/4K 为 PRO 专属
+    free_max_height: int = _int(os.getenv("FREE_MAX_HEIGHT"), 720)
+
+    # 套餐表：plan_key -> {天数, Stripe 一次性 Price ID}；__post_init__ 中填充
+    plans: dict = field(default_factory=dict)
+    # Stripe 是否配置完整（密钥 + 两个 Price）；False 时支付端点 503、不发起任何外呼
+    billing_enabled: bool = False
+
+    def __post_init__(self) -> None:
+        self.plans = {
+            "month": {"days": 30, "price_id": self.stripe_price_month, "label": "月卡"},
+            "year": {"days": 365, "price_id": self.stripe_price_year, "label": "年卡"},
+        }
+        self.billing_enabled = bool(
+            self.stripe_secret_key and self.stripe_price_month and self.stripe_price_year
+        )
 
     # ---- 安全 / 限流 ----
     parse_rate_per_min: int = _int(os.getenv("RATE_PARSE_PER_MIN"), 20)

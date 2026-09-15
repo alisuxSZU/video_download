@@ -13,7 +13,7 @@ from collections import defaultdict, deque
 from urllib.parse import urlparse
 
 import httpx
-from fastapi import Request
+from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -266,6 +266,20 @@ def _safe_url(url: str) -> str:
 
 def register_exception_handlers(app) -> None:
     """注册全局异常处理：返回 JSON 而非 HTML，且不泄露堆栈。"""
+
+    @app.exception_handler(HTTPException)
+    async def _http_exc(request: Request, exc: HTTPException):
+        """把 detail 包裹的错误展平为统一 {"ok":false,error,code} 格式。
+
+        FastAPI 默认处理器会返回 {"detail": {...}}，前端 api() 只读 data.error/data.code，
+        导致 401 login_required（令牌失效不清态）、403 pro_required（升级弹窗不弹）、
+        429 rate_limited 的真实文案全部丢失。dict detail 展平；非 dict 保持原文案；
+        headers（如 429 的 Retry-After）必须透传。
+        """
+        content = exc.detail if isinstance(exc.detail, dict) else {"detail": exc.detail}
+        return JSONResponse(
+            status_code=exc.status_code, content=content, headers=getattr(exc, "headers", None)
+        )
 
     @app.exception_handler(SSRFError)
     @app.exception_handler(InvalidURL)

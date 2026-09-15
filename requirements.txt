@@ -8,3 +8,5 @@ python-dotenv>=1.0.0
 yt-dlp>=2026.08.19
 # 抖音视频下载（0.1.2）：服务端无头浏览器，复用系统 Chrome，无需下载 Chromium
 playwright>=1.40.0
+# 会员支付（0.7.0）：Stripe Checkout 托管收银台 + Webhook（v8+ StripeClient）
+stripe>=11.0.0

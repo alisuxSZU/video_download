@@ -73,7 +73,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1
 | 字幕提取/翻译 | 手动>自动字幕；一键翻译成简体中文（LLM） |
 | AI 视频摘要 | 由字幕生成**结构化解说**：主题 + 章节·时间轴 + 思维导图 + 关键词 + Markdown 全文（LLM，仅服务端持 Key） |
 | AI 问答 | 对视频**气泡聊天式追问**（SSE 流式），可按「第几分钟讲了什么」定位到具体时间区间 |
-| PRO 定价展示 | 免费 vs PRO 权益对比、升级引导（v1 占位，未接真实支付/无 DB） |
+| 会员购买（v0.7.0） | 邮箱账户注册/登录 + Stripe Checkout 托管收银台 + Webhook 幂等履约；PRO 权益：不限清晰度（1080p/4K）、AI 不限日次数；免费用户封顶 720p、AI 每日 3 次 |
 | 隐私安全 | URL/SSRF 校验、限流、安全响应头、错误脱敏、临时文件过期自动清理 |
 
 ---
@@ -89,6 +89,9 @@ app/
   downloader.py  # yt-dlp 封装：probe/download/进度/格式启发式/字幕
   tasks.py       # 内存 job store + 线程池 + 信号量 + 后台清理
   ai.py          # OpenAI 兼容 LLM：翻译 + 摘要
+  auth.py        # 账户：注册/登录/令牌/PRO 判定/AI 配额（v0.7.0）
+  billing.py     # Stripe Checkout 创建/Webhook 验签/幂等履约（v0.7.0）
+  db.py          # SQLite 持久化：users/orders/webhook_events/ai_usage（v0.7.0）
   routes.py      # 全部 API 端点
 static/
   index.html / app.js / styles.css         # 前端单页（HTML + 逻辑 + 样式）
@@ -98,6 +101,8 @@ docs/            # ★ 方案与设计文档（扩展功能的依据）
   API.md         # 接口契约
   SECURITY.md    # 安全清单与威胁模型
   CHANGELOG.md   # 里程碑实现进度
+  MEMBERSHIP.md  # 会员购买设计（v0.7.0）
+  STRIPE-SETUP.md # Stripe 运维操作指南：不配置/离线测/真实走单（v0.7.0）
 ```
 
 ---
@@ -121,6 +126,13 @@ docs/            # ★ 方案与设计文档（扩展功能的依据）
 | POST | `/api/ai/chapters` | 生成章节·时间轴 |
 | POST | `/api/ai/mindmap` | 生成思维导图 |
 | POST | `/api/ai/ask` | SSE 流式问答（气泡聊天） |
+| POST | `/api/auth/register` | 邮箱注册（v0.7.0） |
+| POST | `/api/auth/login` | 邮箱登录（v0.7.0） |
+| POST | `/api/auth/logout` | 退出登录、吊销令牌（v0.7.0） |
+| GET | `/api/auth/me` | 当前用户 + PRO 状态 + AI 配额（v0.7.0） |
+| POST | `/api/billing/checkout` | 创建 Stripe Checkout 会话（v0.7.0） |
+| POST | `/api/billing/stripe/webhook` | Stripe Webhook 回调（验签+幂等履约）（v0.7.0） |
+| GET | `/api/billing/orders` | 当前用户订单列表（v0.7.0） |
 
 ---
 

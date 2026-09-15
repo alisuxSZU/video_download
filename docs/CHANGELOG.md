@@ -1,5 +1,67 @@
 # CHANGELOG — 按里程碑记录的实现进度与决策变更
 
+## [0.7.0] — 会员购买（Stripe Checkout 一次性付款）+ 账户体系 + PRO 权益拦截（2026-09-15）
+
+> 给网站增加【用户购买会员】：邮箱+密码账户、Stripe 托管收银台一次性购买月卡/年卡（重复购买叠加天数）、Webhook 驱动幂等履约、PRO 权益后端硬拦截。设计方案见 [MEMBERSHIP.md](MEMBERSHIP.md)（全部关键决策已人工确认）。
+
+### Added / 数据层 `app/db.py`（新模块，SQLite 零额外服务）
+- 5 张表：`users`（账户+`member_expire_at` 会员到期）/ `auth_tokens`（会话，仅存 SHA-256 哈希）/ `orders`（订单状态机，`stripe_session_id` UNIQUE）/ `webhook_events`（事件去重主键）/ `ai_usage`（免费 AI 日配额，主键 `(subject, ymd)`）。
+- 连接管理：模块级单连接 `check_same_thread=False` + `threading.Lock` 串行化；`PRAGMA journal_mode=WAL`/`synchronous=NORMAL`/`foreign_keys=ON`；`CREATE TABLE IF NOT EXISTS` 幂等建表（v1 不引迁移工具）。
+- `transaction()` 上下文：`BEGIN IMMEDIATE` 立即拿写锁，提交/回滚由上下文保证——Webhook 履约的「条件更新订单 + 叠加会员时长」必须包在同一事务里。
+- 库文件 `data/vdl.db`，`data/*.db*` 已加 `.gitignore`。
+
+### Added / 账户模块 `app/auth.py`（新模块）
+- 注册/登录：邮箱小写归一校验 + 密码 8~128 位；**密码 PBKDF2-HMAC-SHA256（每用户独立 salt，200k 迭代，标准库零新依赖）**；登录失败统一「邮箱或密码错误」（防邮箱枚举）。
+- 会话：`secrets.token_urlsafe(32)` 不透明令牌，库中仅存哈希；`Authorization: Bearer` 解析；登出即删（可吊销）；`last_seen_at` 60s 节流更新。
+- 会员判定 `is_pro`：`member_expire_at > now`；`public_user` 对外视图不含 user_id/密码哈希。
+- AI 配额：`quota_subject`（游客 `ip:x` / 账户 `u:x`）+ `ai_usage` UPSERT 计数；PRO 不限日次数。
+
+### Added / 支付模块 `app/billing.py`（新模块，Stripe SDK `StripeClient`）
+- **下单**：校验套餐（服务端套餐表 plan→`price_id`/天数，前端只传 `plan` 键）→ **先建本地 pending 订单** → `checkout.sessions.create(mode="payment", client_reference_id=order_id, customer_email, success/cancel_url)` → 回写 `stripe_session_id` → 返回收银台 `url`。
+- **Webhook**：`construct_event` 用 `whsec_` 对**原始字节体**验签；`event_id` 主键去重（INSERT 占位，UNIQUE 冲突=重复投递短路）；按事件分发：`completed`/`async_payment_succeeded`→履约、`async_payment_failed`→failed、`expired`→expired、其他→记录后 200。
+- **幂等履约（核心）**：`fulfill_order` 在 `BEGIN IMMEDIATE` 事务内 `UPDATE orders SET status='paid' WHERE order_id=? AND status='pending'`——影响行数=0 即已处理，**短路不重复加时长**；随后 `member_expire_at = MAX(当前到期, now) + 套餐天数`（续费叠加）。`payment_status != paid` 不履约（等异步成功事件）。
+- 履约失败删事件占位 + 路由返 500 → Stripe 按策略重试可重新处理；4xx 数据非法则 200 不重试。
+
+### Added / 路由 `app/routes.py`
+- `POST /api/auth/register|login|logout`、`GET /api/auth/me`（可选登录不报错，附 AI 配额与 `free_max_height`）。
+- `POST /api/billing/checkout`（登录+限流；Stripe 未配置 → 503 `billing_disabled`）、`POST /api/billing/stripe/webhook`（验签+幂等）、`GET /api/billing/orders`（本人订单，越权隔离）。
+- PRO 权益拦截：下载清晰度 >`FREE_MAX_HEIGHT`（默认 720）→ 403 `pro_required`、未指定格式强制 `[height<=720]` 防绕过；字幕翻译（`target_lang` 非空）非 PRO → 403；AI 四端点非 PRO 日配额（默认 3 次，成功调用才计数）+ PRO 独立更高分钟限流。
+
+### Added / 前端（`static/`，零构建沿用现有风格）
+- 导航用户区：未登录「登录/注册」；已登录邮箱徽标 + PRO 皇冠角标（点击开会员中心）。
+- 登录/注册模态框（Tab 切换、中文错误文案、登录成功自动续走被拦的下单流程）。
+- 支付弹窗：月卡/年卡两张套餐卡 → checkout 跳转；`?pay=success|cancel` 回跳后轮询 `/api/auth/me`（最多 ~10s）展示「开通成功，有效期至 …」。
+- 会员中心：会员状态/到期时间 + 订单记录（`/api/billing/orders`）+ 退出登录。
+- 功能加锁 UI：格式列表 1080p+ 行 👑 PRO 锁标（点击弹升级）；`api()` 统一附 Bearer，401 `login_required` 静默退游客态，`pro_required` 统一弹升级弹窗。
+
+### Changed
+- `app/config.py`：新增 Stripe 配置（`STRIPE_SECRET_KEY/WEBHOOK_SECRET/PRICE_MONTH/PRICE_YEAR`）、套餐表、`RATE_AUTH_PER_MIN`/`RATE_BILLING_PER_MIN`/`AI_FREE_DAILY_LIMIT`/`RATE_AI_PRO_PER_MIN`/`FREE_MAX_HEIGHT`；`billing_enabled` 由密钥齐全推导。版本号 → 0.7.0。
+- `app/main.py`：启动时 `db.init_db()`。
+- `requirements.txt`：新增 `stripe>=11.0`。
+- `.env.example`：新增「会员账户 / Stripe 支付」配置段。
+
+### Fixed（v0.7.0 开发中发现）
+- **`HTTPException` 错误格式不一致（真 BUG）**：FastAPI 默认把 `detail` 包成 `{"detail":{...}}`，而前端 `api()` 只读 `data.error/data.code` → 401 `login_required`（令牌失效不清游客态）、403 `pro_required`（升级弹窗不弹）、429 的真实文案全部丢失。修：`app/security.py` 注册 `HTTPException` 处理器，dict detail **展平**为统一 `{"ok":false,error,code}`（headers 如 429 `Retry-After` 透传）；原 SECURITY.md「已确认缺口 #4」闭环。
+- **`sqlite3.Row` 无 `.get()`**：`authenticate` 返回 Row 后 `public_user` 调 `.get()` 崩 500 → 统一 `dict(row)` 转换。
+- **stripe v15 `StripeObject` 无 `.get()`**：Webhook session 取 `client_reference_id` 静默 AttributeError → 履约必挂。修：`_session_field` 属性访问 + 下标访问双兜底（dict/StripeObject 双兼容）。
+
+### Verified
+- ✅ **离线自动化测试 29 项全绿**（`test_membership.py`，临时库 + 本地构造签名事件，不触网）：注册/重复注册/非法邮箱/弱密码/错误密码/登录/me 三态/令牌吊销/越权 401/Stripe 未配置 503/缺签名头 400/篡改载荷 400/履约开通+30 天/事件重放幂等（不叠加）/不同事件同订单不重复履约/续费叠加/unpaid 不履约/async_payment_failed→failed/expired→expired/订单列表/AI 配额计满/退出登录。
+- ✅ **浏览器冒烟**（Playwright + 系统 Chrome，8031 实例）：注册 → 登录 → 升级弹窗（`billing_disabled` 503 兜底「即将上线」）→ 会员中心 → 退出登录，全流程通过、无 console 报错。
+- ✅ TestClient 复核错误展平：401 扁平 `{ok,code:"login_required"}`、429 保留 `Retry-After`、404 扁平。
+- ⚠️ **Stripe 真实联调（测试模式）待运营者配合**：需 `sk_test_`/两个 `price_`/`stripe listen` 的 `whsec_`，按 [docs/STRIPE-SETUP.md](STRIPE-SETUP.md) 逐步操作（4242 成功卡 / 0002 拒付卡 / 重放幂等）。
+
+### 决策（均已在 MEMBERSHIP.md §0 人工确认）
+| 项 | 决策 |
+|---|---|
+| 账户 | 邮箱+密码；不透明令牌（非 JWT，可吊销）；v1 不做邮箱验证/忘记密码（需 SMTP） |
+| 付费模式 | 一次性购买（`mode=payment`）月卡 30 天/年卡 365 天，**重复购买叠加**，不做自动续费 |
+| 收单 | Stripe Checkout 托管收银台（本站不接触卡号）；金额以后台 Price 为唯一事实源 |
+| 履约依据 | **只信验签后的 Webhook 事件**；`success_url` 仅 UX |
+| 幂等 | 三层：session UNIQUE / event 主键 / 订单状态机条件更新（事务内） |
+| 数据库 | SQLite 标准库（单 worker 部署契合），`data/vdl.db` |
+| 批量下载 | **维持免费**（仅清晰度/翻译/AI 次数受限） |
+
 ## [0.6.1] — GEO 生成式引擎优化：llms.txt / AI 爬虫声明 / IndexNow / TL;DR 答案块（2026-09-11）
 
 > 目标：让 ChatGPT、Perplexity、Claude、豆包、Kimi、文心一言等 AI 引擎在回答"视频下载/去水印/AI 总结/字幕提取"类问题时能检索并优先引用闪电下载。前提核查：robots 仅禁 `/api/`、无 UA 拦截、限流只作用于 API → AI 爬虫本可抓取页面，缺口在**内容可引用性**与**实体信号**。已人工确认：GitHub 公开署名；加 IndexNow；llms.txt 中文 + 英文概览。

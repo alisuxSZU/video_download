@@ -16,6 +16,13 @@
   // 按「链接 → 功能」缓存各功能结果：链接不变则结果不变；点「重新生成」才强制重算。
   let featureCache = {}; // url -> { [feature]: data }
   let subModeTranslate = false; // 最近一次字幕操作是否为「翻译」，供「重新生成」按同一模式重算
+  // ---------- 账户态（v0.7.0 会员体系） ----------
+  const TOKEN_KEY = "vdl_token";
+  let me = null;          // 当前登录用户 {email, is_pro, member_expire_at, ...}；null=游客
+  let aiQuota = { used: 0, limit: 3 };   // 当日 AI 用量（游客按 IP、免费账户按 user；PRO 不计）
+  let proCap = 720;       // 免费用户清晰度封顶（服务端 /api/auth/me 下发；0=不封顶）
+  let authMode = "login"; // 登录模态框当前模式：login | register
+  let pendingPlan = null; // 未登录点购买时暂存套餐 key，登录成功后自动续起支付
 
   // ---------- 工具 ----------
   async function api(path, body) {
@@ -24,13 +31,20 @@
       const stored = localStorage.getItem("vdl_bili_sessdata");
       if (stored && !body.bili_sessdata) body.bili_sessdata = stored;
     }
-    const opts = body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {};
+    const headers = {};
+    const token = localStorage.getItem(TOKEN_KEY) || "";
+    if (token) headers["Authorization"] = "Bearer " + token; // 账户态：注册/登录/me/支付
+    if (body) headers["Content-Type"] = "application/json";
+    const opts = body
+      ? { method: "POST", headers, body: JSON.stringify(body) }
+      : { method: "GET", headers };
     const res = await fetch(path, opts);
     let data = {};
     try { data = await res.json(); } catch (_) { /* 非 JSON */ }
     if (!res.ok) {
       const err = new Error(data.error || "请求失败，请稍后再试");
       err.code = data.code || "";  // 把后端 error code 挂到 Error 上，前端 catch 可检测
+      if (res.status === 401 && err.code === "login_required") { clearAuthState(); } // 令牌失效：静默退回游客态
       throw err;
     }
     return data;
@@ -147,7 +161,14 @@
       current.selected = null;
       list.appendChild(formatRow({ height: "", resolution: "默认最佳画质", ext: data.ffmpeg ? "mp4" : "mp4", filesize: 0, needs_merge: false, progressive: true }, true));
     } else {
-      fmts.forEach((f, i) => { if (i === 0) current.selected = f.format_id; list.appendChild(formatRow(f, i === 0)); });
+      // 默认选中第一个「未加锁」档位（免费用户最优可下的画质），加锁档仅展示引导升级
+      const firstFree = fmts.findIndex((f) => !isLockedFormat(f));
+      fmts.forEach((f, i) => {
+        const checked = i === firstFree;
+        if (checked) current.selected = f.format_id;
+        list.appendChild(formatRow(f, checked));
+      });
+      if (firstFree < 0) current.selected = null; // 全部加锁（理论上不会）
     }
   }
 
@@ -165,34 +186,50 @@
     btn.textContent = "展开";
   }
 
+  // 从 resolution（如 "1080p" / "1920x1080"）提取高度；解析不出返回 0
+  function fmtHeight(f) {
+    const m = String(f.resolution || "").match(/(\d{3,4})\s*p/i) || String(f.resolution || "").match(/(\d{3,4})x\d+/i);
+    return m ? parseInt(m[1], 10) : 0;
+  }
+  // 免费用户（含游客）高于封顶的档位 → PRO 专属（服务端会二次硬拦截，这里仅 UX 锁标）
+  function isLockedFormat(f) {
+    const h = fmtHeight(f);
+    return proCap > 0 && h > proCap;
+  }
+
   function formatRow(f, checked) {
+    const locked = isLockedFormat(f);
     const div = document.createElement("div");
     div.className = "group flex items-center justify-between rounded-xl border px-4 py-3 cursor-pointer transition " +
-      (checked ? "border-brand bg-brand-soft" : "border-slate-200 hover:border-brand/50");
+      (locked ? "border-slate-200 bg-slate-50 opacity-80" : checked ? "border-brand bg-brand-soft" : "border-slate-200 hover:border-brand/50");
     div.innerHTML = `
       <div class="flex items-center gap-3 min-w-0">
-        <div class="w-4 h-4 rounded-full border-2 ${checked ? "border-brand bg-brand" : "border-slate-300"} flex-none"></div>
+        <div class="w-4 h-4 rounded-full border-2 ${checked && !locked ? "border-brand bg-brand" : "border-slate-300"} flex-none"></div>
         <div class="min-w-0">
           <div class="font-semibold text-sm text-slate-800">${f.resolution || "默认"}</div>
           <div class="text-xs text-slate-400 truncate">${(f.ext || "").toUpperCase()}${f.filesize ? " · " + humanBytes(f.filesize) : ""}</div>
         </div>
-      </div>`;
+      </div>
+      ${locked ? `<span class="shrink-0 rounded-full bg-amber-100 text-amber-700 text-[10px] font-bold px-2 py-1" title="PRO 会员专属清晰度">👑 PRO</span>` : ""}`;
     div.onclick = () => {
+      if (locked) { openUpgradeWithMsg(`${fmtHeight(f)}p 为 PRO 会员专属清晰度，升级后不限清晰度`); return; }
       current.selected = f.format_id;
       listRows(); // 更新选中态
       toast(`已选 ${f.resolution || "最佳画质"}`);
     };
     div._fid = f.format_id;
+    div.dataset.locked = locked ? "1" : "0";
     return div;
   }
 
   function listRows() {
     $$("#formatList > div").forEach((d) => {
-      const on = current.selected === d._fid;
+      const locked = d.dataset.locked === "1";
+      const on = current.selected === d._fid && !locked;
       d.className = "group flex items-center justify-between rounded-xl border px-4 py-3 cursor-pointer transition " +
-        (on ? "border-brand bg-brand-soft" : "border-slate-200 hover:border-brand/50");
+        (locked ? "border-slate-200 bg-slate-50 opacity-80" : on ? "border-brand bg-brand-soft" : "border-slate-200 hover:border-brand/50");
       const dot = d.querySelector("div.flex.items-center.gap-3 > div");
-      dot.className = "w-4 h-4 rounded-full border-2 " + (on ? "border-brand bg-brand" : "border-slate-300");
+      if (dot) dot.className = "w-4 h-4 rounded-full border-2 " + (on ? "border-brand bg-brand" : "border-slate-300");
     });
   }
 
@@ -217,6 +254,7 @@
           $("#progSpeed").textContent = j.speed ? j.speed + " · " + humanBytes(j.downloaded_bytes) : humanBytes(j.downloaded_bytes);
           if (j.status === "error") {
             $("#progStatus").textContent = "下载失败：" + (j.error || "未知原因");
+            if (j.error_code === "pro_required") openUpgradeWithMsg(j.error); // 服务端兜底拦截 → 引导升级
           }
         },
         onDone: (j) => {
@@ -225,7 +263,10 @@
           triggerDownload(`/api/jobs/${j.id}/file`); // 直连流式写盘，无需再点一次
           currentJobId = null;
         },
-        onError: (j) => { $("#progStatus").textContent = "下载失败：" + (j.error || "请重试"); },
+        onError: (j) => {
+          $("#progStatus").textContent = "下载失败：" + (j.error || "请重试");
+          if (j.error_code === "pro_required") openUpgradeWithMsg(j.error);
+        },
       });
     } catch (e) { toast(e.message); }
   }
@@ -270,13 +311,17 @@
         } else {
           info.textContent = (j.title ? j.title.slice(0, 40) + " · " : "") + (j.speed || "") + " " + humanBytes(j.downloaded_bytes);
         }
-        if (j.status === "error") info.textContent = (j.error || "失败");
+        if (j.status === "error") {
+          info.textContent = (j.error || "失败");
+          if (j.error_code === "pro_required") openUpgradeWithMsg(j.error);
+        }
       },
       onError: (j) => {
         const badge = row.querySelector(".status-badge");
         badge.textContent = "失败";
         badge.className = "status-badge text-xs font-semibold px-2 py-1 rounded-full shrink-0 bg-rose-100 text-rose-600";
         row.querySelector(".prog-info").textContent = (j.error || "下载失败");
+        if (j.error_code === "pro_required") openUpgradeWithMsg(j.error);
       },
     });
   }
@@ -387,6 +432,7 @@
       toast(translate ? `已翻译成${targetLang}` : "字幕已提取");
     } catch (e) {
       stopBusy();
+      if (e.code === "pro_required") { openUpgradeWithMsg(e.message); return; } // 免费额度用完 → 引导升级
       // B 站字幕需登录态 → 弹模态框引导粘贴 SESSDATA，保存后自动重试
       if (e.code === "no_subtitles" && /B ?站|Bilibili|登录|SESSDATA/i.test(e.message)) {
         openBiliLoginModal(() => handleSubtitle(translate, true));
@@ -949,6 +995,7 @@
     } catch (e) {
       if (activeUrl() !== url) return;
       stopBusy();
+      if (e.code === "pro_required") { openUpgradeWithMsg(e.message); return; } // 免费额度用完 → 引导升级
       // B 站字幕需登录态 → 弹模态框引导粘贴 SESSDATA，保存后自动重试
       if (e.code === "no_subtitles" && /B ?站|Bilibili|登录|SESSDATA/i.test(e.message)) {
         openBiliLoginModal(() => handleSummary(true));
@@ -975,6 +1022,7 @@
       toast("章节时间轴已生成");
     } catch (e) {
       stopBusy();
+      if (e.code === "pro_required") { openUpgradeWithMsg(e.message); return; }
       if (e.code === "no_subtitles" && /B ?站|Bilibili|登录|SESSDATA/i.test(e.message)) {
         openBiliLoginModal(() => handleChapters(true)); return;
       }
@@ -1004,6 +1052,7 @@
       toast("思维导图已生成");
     } catch (e) {
       stopBusy();
+      if (e.code === "pro_required") { openUpgradeWithMsg(e.message); return; }
       if (e.code === "no_subtitles" && /B ?站|Bilibili|登录|SESSDATA/i.test(e.message)) {
         openBiliLoginModal(() => handleMindmap(true)); return;
       }
@@ -1154,9 +1203,10 @@
         signal, // 支持清空/换链接时取消在途请求，杜绝陈旧流写回
       });
       if (!resp.ok) {
-        let msg = "AI 回答失败";
-        try { msg = (await resp.json()).error || msg; } catch (_) {}
-        throw new Error(msg);
+        let msg = "AI 回答失败", code = "";
+        try { const j = await resp.json(); msg = j.error || msg; code = j.code || ""; } catch (_) {}
+        const err = new Error(msg); err.code = code;
+        throw err;
       }
       if (!resp.body) throw new Error("不支持流式响应");
 
@@ -1193,6 +1243,7 @@
       if (e.name === "AbortError") {
         // 清空/换链接时主动取消：静默，不追加错误、不写回历史
       } else if (myGen === askGen) {
+        if (e.code === "pro_required") openUpgradeWithMsg(e.message); // 免费额度用完 → 引导升级
         appendDelta("\n[出错] " + e.message);
       }
     } finally {
@@ -1213,16 +1264,202 @@
     try { return JSON.parse(data); } catch (_) { return null; }
   }
 
-  // ---------- PRO 弹窗 ----------
-  function openPro() {
-    const m = $("#proModal");
-    m.classList.remove("hidden");
-    m.classList.add("flex");
+  // ---------- 账户与支付（v0.7.0）：登录/注册 · 会员中心 · Stripe Checkout ----------
+  function openModal(sel) { const m = $(sel); m.classList.remove("hidden"); m.classList.add("flex"); }
+  function closeModal(sel) { const m = $(sel); m.classList.add("hidden"); m.classList.remove("flex"); }
+
+  // PRO 升级弹窗：openUpgradeWithMsg 可带触发原因（如「免费额度用完」「1080p 为 PRO 专属」）
+  function openPro(msg) {
+    const tip = $("#proMsg");
+    if (msg) { tip.textContent = msg; tip.classList.remove("hidden"); }
+    else tip.classList.add("hidden");
+    openModal("#proModal");
   }
-  function closePro() {
-    const m = $("#proModal");
-    m.classList.add("hidden");
-    m.classList.remove("flex");
+  function closePro() { closeModal("#proModal"); }
+  function openUpgradeWithMsg(msg) { openPro(msg || ""); }
+
+  // --- 账户状态 ---
+  function isPro() { return !!(me && me.is_pro); }
+  function clearAuthState() {
+    localStorage.removeItem(TOKEN_KEY);
+    me = null;
+    renderAuthUI(); // 静默退回游客态（导航栏恢复「登录 / 注册」）
+  }
+  function renderAuthUI() {
+    const chip = $("#userChip"), login = $("#loginBtn"), up = $("#navUpgrade");
+    if (!chip || !login || !up) return;
+    $("#userEmail").textContent = me ? me.email : "";
+    $("#userProBadge").classList.toggle("hidden", !isPro());
+    chip.classList.toggle("hidden", !me);
+    chip.classList.toggle("flex", !!me);
+    login.classList.toggle("hidden", !!me);
+    up.classList.toggle("hidden", isPro()); // PRO 用户隐藏升级入口，点头像进会员中心
+  }
+  async function refreshMe() {
+    // /api/auth/me 对未登录/令牌失效返回 user=null（200），不抛错
+    try {
+      const d = await api("/api/auth/me");
+      me = d.user || null;
+      aiQuota = { used: d.ai_used_today || 0, limit: d.ai_daily_limit || 3 };
+      if (typeof d.free_max_height === "number") proCap = d.free_max_height;
+    } catch (_) { me = null; }
+    renderAuthUI();
+  }
+
+  // --- 登录 / 注册模态框 ---
+  function setAuthMode(mode) {
+    authMode = mode;
+    const isLogin = mode === "login";
+    $("#authTitle").textContent = isLogin ? "登录账户" : "注册账户";
+    $("#authSubmit").textContent = isLogin ? "登录" : "注册";
+    $("#authPassword").placeholder = isLogin ? "密码" : "密码（至少 8 位）";
+    $("#authHint").textContent = isLogin ? "登录后可购买会员，权益与账户绑定" : "注册即享每日免费 AI 额度，可随时升级 PRO";
+    $("#authTabLogin").className = "auth-tab rounded-lg py-2 transition " + (isLogin ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700");
+    $("#authTabRegister").className = "auth-tab rounded-lg py-2 transition " + (!isLogin ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700");
+  }
+  function openAuth(mode, hint) {
+    setAuthMode(mode || "login");
+    if (hint) $("#authHint").textContent = hint;
+    $("#authError").classList.add("hidden");
+    $("#authPassword").value = "";
+    openModal("#authModal");
+    setTimeout(() => $("#authEmail").focus(), 50);
+  }
+  function authError(msg) { const e = $("#authError"); e.textContent = msg; e.classList.remove("hidden"); }
+  async function handleAuthSubmit() {
+    const email = $("#authEmail").value.trim(), password = $("#authPassword").value;
+    $("#authError").classList.add("hidden");
+    if (!email || !password) { authError("请输入邮箱和密码"); return; }
+    if (authMode === "register" && password.length < 8) { authError("密码至少 8 位"); return; }
+    const btn = $("#authSubmit");
+    btn.disabled = true;
+    btn.textContent = authMode === "login" ? "登录中…" : "注册中…";
+    try {
+      const d = await api(authMode === "login" ? "/api/auth/login" : "/api/auth/register", { email, password });
+      localStorage.setItem(TOKEN_KEY, d.token);
+      me = d.user;
+      aiQuota = { used: d.user.ai_used_today || 0, limit: d.user.ai_daily_limit || 3 };
+      renderAuthUI();
+      closeModal("#authModal");
+      toast(authMode === "login" ? "✓ 登录成功" : "✓ 注册成功，已自动登录");
+      if (pendingPlan) { const p = pendingPlan; pendingPlan = null; startCheckout(p); } // 登录后续起被打断的购买
+    } catch (e) {
+      authError(e.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = authMode === "login" ? "登录" : "注册";
+    }
+  }
+
+  // --- 支付：创建 Checkout → 整页跳转 Stripe 托管收银台 ---
+  let checkoutBusy = false; // 防重复提交（重复点击会造成重复订单）
+  async function startCheckout(plan) {
+    if (checkoutBusy) return;
+    if (!me) { // 未登录先登录，登录成功自动续起支付
+      pendingPlan = plan;
+      closeModal("#proModal"); closeModal("#memberModal");
+      openAuth("login", "请先登录，即可开通 PRO 会员");
+      return;
+    }
+    checkoutBusy = true;
+    ["payMonth", "payYear", "mmPayMonth", "mmPayYear"].forEach((id) => { const b = $("#" + id); if (b) b.disabled = true; });
+    try {
+      const d = await api("/api/billing/checkout", { plan });
+      window.location.href = d.url; // Stripe 托管收银台；支付完成回跳 ?pay=success
+    } catch (e) {
+      if (e.code === "login_required") {
+        pendingPlan = plan;
+        closeModal("#proModal"); closeModal("#memberModal");
+        openAuth("login", "登录已过期，请重新登录后继续支付");
+      } else {
+        toast(e.message);
+      }
+    } finally {
+      checkoutBusy = false;
+      ["payMonth", "payYear", "mmPayMonth", "mmPayYear"].forEach((id) => { const b = $("#" + id); if (b) b.disabled = false; });
+    }
+  }
+
+  // --- 会员中心 ---
+  async function openMember() {
+    if (!me) { openAuth("login", "请先登录后查看会员中心"); return; }
+    await refreshMe(); // 拉最新会员状态与 AI 用量
+    renderMember();
+    openModal("#memberModal");
+    loadOrders();
+  }
+  function renderMember() {
+    if (!me) return;
+    const pro = isPro();
+    $("#mmEmail").textContent = me.email;
+    $("#mmStatusBadge").textContent = pro ? "👑 PRO" : "FREE";
+    $("#mmStatusTitle").textContent = pro ? "PRO 会员生效中" : "免费账户";
+    if (pro && me.member_expire_at) {
+      const d = new Date(me.member_expire_at * 1000);
+      $("#mmStatusDesc").textContent = `有效期至 ${d.toLocaleDateString("zh-CN")}，可叠加续费延长时长`;
+    } else {
+      $("#mmStatusDesc").textContent = "升级 PRO：超清 4K / 批量下载 / 字幕翻译 / 不限次 AI";
+    }
+    $("#mmPlans").classList.toggle("hidden", pro);
+    $("#mmAiQuota").classList.toggle("hidden", pro);
+    if (!pro) {
+      $("#mmAiQuotaText").textContent = `${aiQuota.used} / ${aiQuota.limit}`;
+      $("#mmAiQuotaBar").style.width = Math.min(100, Math.round((aiQuota.used / Math.max(1, aiQuota.limit)) * 100)) + "%";
+    }
+  }
+  async function loadOrders() {
+    if (!me) return;
+    const box = $("#mmOrders");
+    try {
+      const d = await api("/api/billing/orders");
+      const list = d.orders || [];
+      if (!list.length) { box.innerHTML = `<p class="text-slate-300">暂无订单</p>`; return; }
+      const statusZh = { pending: "待支付", paid: "已完成" };
+      box.innerHTML = "";
+      list.forEach((o) => {
+        const row = document.createElement("div");
+        row.className = "flex items-center justify-between rounded-lg border border-slate-100 px-3 py-2";
+        const dt = new Date(o.created_at * 1000).toLocaleDateString("zh-CN");
+        const amt = o.amount_cents ? `${(o.amount_cents / 100).toFixed(2)} ${(o.currency || "").toUpperCase()}` : "--";
+        row.innerHTML = `<span class="font-medium text-slate-600">${o.plan_key === "year" ? "年卡" : "月卡"} · ${dt}</span>
+          <span class="flex items-center gap-2"><span class="text-slate-400">${esc(amt)}</span>
+          <span class="rounded-full px-2 py-0.5 text-[10px] font-bold ${o.status === "paid" ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-500"}">${statusZh[o.status] || esc(o.status)}</span></span>`;
+        box.appendChild(row);
+      });
+    } catch (e) {
+      box.innerHTML = `<p class="text-rose-400">订单加载失败：${esc(e.message)}</p>`;
+    }
+  }
+  async function handleLogout() {
+    try { await api("/api/auth/logout", {}); } catch (_) { /* 令牌可能已失效，忽略 */ }
+    clearAuthState();
+    closeModal("#memberModal");
+    toast("已退出登录");
+  }
+
+  // --- 支付回跳：Stripe 支付完成跳回 /?pay=success#pricing（或 pay=cancel）---
+  function handlePayReturn() {
+    const u = new URL(location.href);
+    const pay = u.searchParams.get("pay");
+    if (!pay) return;
+    u.searchParams.delete("pay"); // 清理参数防刷新重复触发
+    history.replaceState(null, "", u.pathname + u.search + u.hash);
+    if (pay === "cancel") { toast("已取消支付，未产生扣款"); return; }
+    if (pay !== "success") return;
+    toast("支付完成，正在确认会员权益…", 6000);
+    let tries = 0;
+    const iv = setInterval(async () => {
+      tries += 1;
+      await refreshMe();
+      if (me && me.is_pro) {
+        clearInterval(iv);
+        toast("👑 PRO 会员已生效，感谢订阅！");
+        openMember(); // 展示新会员状态与订单
+      } else if (tries >= 15) { // 30s：Webhook 正常在秒级到达；超限给兜底提示
+        clearInterval(iv);
+        toast("支付确认中，权益将在一分钟内自动生效；如未生效请刷新页面");
+      }
+    }, 2000);
   }
 
   // ---------- 事件绑定 ----------
@@ -1268,13 +1505,45 @@
   $("#mmFullscreen").onclick = toggleMindFullscreen;
   $("#mmDownload").onclick = exportMindmapPNG;
   bindMindmapInteractions();
-  $("#upgradeBtn").onclick = openPro;
-  $("#ctaUpgrade").onclick = openPro;
+  $("#upgradeBtn").onclick = () => openPro();
+  $("#ctaUpgrade").onclick = () => openPro();
+  $("#navUpgrade").onclick = () => openPro();
   $("#proClose").onclick = closePro;
-  $("#payMonth").onclick = () => toast("支付能力即将上线，敬请期待！");
-  $("#payYear").onclick = () => toast("支付能力即将上线，敬请期待！");
+  $("#payMonth").onclick = () => startCheckout("month");
+  $("#payYear").onclick = () => startCheckout("year");
   $("#proModal").addEventListener("click", (e) => { if (e.target.id === "proModal") closePro(); });
-  document.addEventListener("keydown", (e) => { if (e.key === "Escape") closePro(); });
+
+  // 账户：登录/注册模态 + 导航用户区
+  $("#loginBtn").onclick = () => openAuth("login");
+  $("#userChip").onclick = openMember;
+  $("#authTabLogin").onclick = () => setAuthMode("login");
+  $("#authTabRegister").onclick = () => setAuthMode("register");
+  $("#authSubmit").onclick = handleAuthSubmit;
+  $("#authCancel").onclick = () => closeModal("#authModal");
+  $("#authModal").addEventListener("click", (e) => { if (e.target.id === "authModal") closeModal("#authModal"); });
+  $("#authEmail").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); handleAuthSubmit(); } });
+  $("#authPassword").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); handleAuthSubmit(); } });
+
+  // 会员中心
+  $("#memberClose").onclick = () => closeModal("#memberModal");
+  $("#memberModal").addEventListener("click", (e) => { if (e.target.id === "memberModal") closeModal("#memberModal"); });
+  $("#mmPayMonth").onclick = () => startCheckout("month");
+  $("#mmPayYear").onclick = () => startCheckout("year");
+  $("#mmOrdersRefresh").onclick = loadOrders;
+  $("#logoutBtn").onclick = handleLogout;
+
+  // Escape 依次关闭所有模态框（支付/账户/会员中心/B站登录）
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      closePro();
+      closeModal("#authModal");
+      closeModal("#memberModal");
+    }
+  });
+
+  // 启动：恢复登录态（含清晰度封顶/AI 配额）+ 处理 Stripe 支付回跳
+  refreshMe();
+  handlePayReturn();
 
   // 自动摘要开关（默认关，localStorage 持久化）+ 视频描述展开/收起
   $("#autoSumToggle").checked = autoSummaryOn();

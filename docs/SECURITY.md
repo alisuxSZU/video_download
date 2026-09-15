@@ -16,7 +16,11 @@
 | **磁盘耗尽** | 持续下载不清理 | 后台 TTL 循环清理 + 单机并发上限 |
 | **信息泄露** | 异常回显堆栈/绝对路径/完整 URL | 全局 ExceptionHandler 脱敏返回 + 日志只记 host |
 | **XSS / 点击劫持** | 前端注入、iframe 套壳 | `X-Frame-Options:DENY` + CSP。⚠️ 前端 `app.js` 的 `addBatchRow` 把用户输入 `url` 直插 `innerHTML` 未转义，且 CSP `script-src`/`style-src` 含 `'unsafe-inline'` → 注入防线被削弱，见「已确认缺口」 |
-| **越权** | 无账户体系，仅限轮询自己 job | job_id 为 UUID 不可猜测；`/file` 校验 job 存在 |
+| **越权** | 无账户体系，仅限轮询自己 job | job_id 为 UUID 不可猜测；`/file` 校验 job 存在。v0.7.0 起订单/账户查询强制 `WHERE user_id=当前用户`，令牌仅哈希存储 |
+| **伪造支付回调**（v0.7.0） | 攻击者直 POST `/api/billing/stripe/webhook` 伪造「支付成功」白嫖会员 | Webhook 强制 Stripe 签名验证（原始字节体 + `whsec_` 密钥），失败 400；会员开通**只**由验签后的事件驱动 |
+| **重放/重复开通**（v0.7.0） | 同一支付事件重放、并发回调 → 重复叠加会员时长 | 三层幂等：`stripe_session_id` UNIQUE / `event_id` 主键去重 / 订单 `pending→paid` 条件更新（详见 MEMBERSHIP.md §3.4） |
+| **金额篡改**（v0.7.0） | 前端改请求体指定金额/天数 | 前端只传 `plan` 键；金额/天数只取自服务端套餐表与验签后的 Stripe 回执 |
+| **凭据破解/枚举**（v0.7.0） | 撞库、批量注册、探测已注册邮箱 | 密码 PBKDF2-HMAC-SHA256 加盐 200k 迭代 + 常数时间比较；登录失败统一文案防枚举；注册/登录/下单独立限流 |
 
 ## 已落实的具体防护
 
@@ -79,6 +83,24 @@
 - **可关闭**：`DOUYIN_ENABLED=false` 一键关闭抖音，走友好降级提示，不影响其他平台。
 - **风控兜底**：超时/验证码/异常统一映射为友好中文（`DouyinBlockedError`→`forbidden`、`DouyinUnsupportedError`→`unsupported`），绝不 500/泄漏堆栈。
 
+### 10. 会员账户与支付（v0.7.0，Stripe）
+
+支付安全是本项目的硬底线，实现见 [app/billing.py](../app/billing.py) / [app/auth.py](../app/auth.py)，威胁模型见上表新增四行。逐条落实：
+
+- **Webhook 强制验签**：`construct_event` 用 Stripe SDK 对**原始字节体**（`await request.body()`，禁止先 JSON 解析）+ `whsec_` 密钥验签，失败一律 400（Stripe 会重试，伪造请求被拒）。
+- **履约只信验签后的事件**：会员开通**唯一**由 `checkout.session.completed` / `async_payment_succeeded` 驱动；`success_url` 浏览器回跳仅 UX 展示，绝不据此发放权益（防关页面/伪造跳转）。
+- **三层幂等防重复开通**：① `orders.stripe_session_id` UNIQUE（一会话一订单）；② `webhook_events.event_id` 主键去重（Stripe 官方声明事件可能**重复且乱序**投递，重放直接 200 短路）；③ 履约在 `BEGIN IMMEDIATE` 事务内做 `UPDATE orders ... WHERE status='pending'` 条件更新，影响行数=0 即短路，并发/重放也只加一次时长。履约失败时删除事件占位并返回 500，让 Stripe 重试可重新处理。
+- **金额/天数不可被前端指定**：请求体只有 `plan` 键；天数查服务端套餐表，金额落单取验签后回执的 `amount_total/currency` 留痕。
+- **密钥管理**：`sk_test_/sk_live_` 只存 `.env`（已 gitignore）；任何 API 响应不回传密钥/密码哈希/令牌明文；`billing_enabled` 由密钥是否齐全推导，未配置时支付端点 503 且不发起任何对 Stripe 的外呼。
+- **密码存储**：PBKDF2-HMAC-SHA256，每用户 16 字节独立随机 salt、200k 迭代（标准库实现）；校验用 `hmac.compare_digest` 常数时间比较。
+- **会话令牌**：`secrets.token_urlsafe(32)` 不透明令牌，库中仅存 SHA-256 哈希（拖库不可反推）；登出即删可吊销；无 JWT 撤销难题。
+- **防邮箱枚举**：登录对「账号不存在」与「密码错误」返回同一 401 文案。
+- **越权隔离**：`/api/billing/orders` 强制 `WHERE user_id=当前用户`；`public_user` 视图不含 `user_id`/密码哈希。
+- **限流**：注册/登录（`RATE_AUTH_PER_MIN`=5/分/IP）、创建支付会话（`RATE_BILLING_PER_MIN`=5/分/IP）独立限流防爆破与刷单；AI 配额按 subject（游客 IP / 用户 ID）日计。
+- **SQL 注入**：SQLite 全量参数化 `?` 占位；写操作经统一锁（`BEGIN IMMEDIATE`）串行化。
+- **错误展平（v0.7.0 修复）**：`HTTPException` 自定义处理器把 `{"detail":{...}}` 展平为统一 `{"ok":false,error,code}`，前端不再丢失 401/403/429 真实文案（原「已确认缺口 #4」已闭环）。
+- 已知取舍：v1 不做邮箱验证/忘记密码（需 SMTP）；退款后不自动回收会员（Stripe Dashboard 人工操作，记 v2）；SQLite 单文件库依赖文件系统权限保护（部署目录不可被 web 根直接访问）。
+
 ## 已知务实折中
 
 - **DNS rebinding**：本项目先「前置校验 + 日志审查」。彻底防御需在真正发起连接处二次校验或禁用重定向，成本高；对公网普通防护已足够，后续可加强。
@@ -91,7 +113,7 @@
 1. **`EXTRACTOR_ALLOWLIST` 未接入**：`settings.extractor_allowlist` 无任何读取点，`validate_url` 只留注释即 `return url`。启用需在 `validate_url` 里按 `ie_key`/host 校验。不启用则任何站都可被抓（仅靠限流兜底）。
 2. **`APP_TOKEN` 未校验**：任何端点都不检查 `X-App-Token`，配置项无实际效果。启用需加依赖/中间件（全部 `/api` 路由）。
 3. **XSS 注入面收紧**：`static/app.js` `addBatchRow` 用 `innerHTML` 直插 `url` 未转义；CSP `script-src`/`style-src` 含 `'unsafe-inline'`（Tailwind Play CDN 需要但不必然冲突，可改用编译后的 Tailwind 或 `textContent` 赋值）。三处建议：`textContent` 替代 `innerHTML`、`url` 入库前洗、评估是否去掉 `'unsafe-inline'`。⚠️ **已局部改善**：AI 问答气泡（v0.2.6 `askBubble`/`handleAsk`）已改 `textContent` 赋值（用户问题/模型增量/错误文案不再进 `innerHTML`）；**摘要/问答 markdown（v0.2.8）经 `DOMPurify.sanitize(marked.parse(...))` 消毒后再渲染**，AI 输出注入面已闭环。**仍为注入面**：`formatRow`（`static/app.js`）对 `f.resolution`/`f.ext`（来自 yt-dlp 的平台元数据，属不可信输入）仍用 `innerHTML` 直插——虽一般非用户直接控制，但接的是外部数据、仍是剩余注入面；`addBatchRow` 的 `url` 亦仍待改。
-4. **前端错误文案丢失**：`static/app.js` 的 `api()` 只读 `data.error`，对 `detail` 包裹的 429/503 等会落到通用「请求失败」。建议兼容 `data.detail?.error`。
+4. ~~**前端错误文案丢失**~~：✅ **v0.7.0 已修复**——`app/security.py` 注册 `HTTPException` 处理器，服务端把 `detail` 包裹的错误展平为统一扁平格式（含 401/403/429），前端 `api()` 无需改动即读到真实文案。
 
 ## 上线检查清单
 
@@ -99,6 +121,8 @@
 - [x] 连续请求触发 429 + 友好文案
 - [x] curl 查看响应头（CSP/X-Frame-* 等）齐全
 - [x] 构造错误不包含堆栈/绝对路径/完整 URL
-- [ ] 部署：反代 + HTTPS + ICP 备案
+- [x] 支付：Webhook 验签拒绝伪造请求；同一事件重放只履约一次；未登录/他人订单不可见（test_membership.py 29 项离线回归全绿）
+- [ ] 部署：反代 + HTTPS + ICP 备案（支付域名需 HTTPS，Stripe 强制）
 - [ ] 定期升级 yt-dlp 并跑回归矩阵
-- [ ] 逐项评估「已确认缺口」（extractor 白名单 / APP_TOKEN / XSS 注入面 / 前端错误文案）
+- [ ] 逐项评估「已确认缺口」（extractor 白名单 / APP_TOKEN / XSS 注入面）
+- [ ] 上线切 live 密钥前：轮换 `sk_live_`/`whsec_`（Webhook 端点在 Dashboard 重建）、核对两个 Price 为 live 模式、确认 `.env` 不含 test 密钥

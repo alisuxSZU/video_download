@@ -22,15 +22,16 @@
 | M2.7 `v0.5.0` | B站字幕直调官方 API + 前端粘贴 SESSDATA | ✅ 完成（mock 61 + 非 B站回归 23 + 真实 B站端到端：人工 zh 114 条 / AI zh 599 条 / summary 全链路 200，全绿） |
 | M2.8 `v0.6.0` | SEO 搜索引擎优化（TDK/结构化数据/robots/sitemap/教程内容页） | ✅ 完成（详见 CHANGELOG 0.6.0） |
 | M2.9 `v0.6.1` | GEO 生成式引擎优化（llms.txt/AI 爬虫声明/IndexNow/TL;DR 答案块） | ✅ 完成（详见 CHANGELOG 0.6.1） |
-| M3 | 加固上线（反代/HTTPS/备案/回归） | ⬜ |
+| M2.10 `v0.7.0` | **会员购买**：邮箱账户 + Stripe Checkout 一次性付款 + Webhook 幂等履约 + PRO 权益拦截 | ✅ 代码完成（离线 29 项测试 + 浏览器冒烟全绿；Stripe 测试模式真实联调待运营者按 [STRIPE-SETUP.md](STRIPE-SETUP.md) 配合） |
+| M3 | 加固上线（反代/HTTPS/备案/回归 + Stripe 切 live） | ⬜ |
 
 > M2 已完成并通过端到端回归：`extract_subtitle`（翻译）、`/api/ai/summary`（v2 结构化，含章节时间轴 + 思维导图派生 + Markdown 全文）、`/api/ai/ask`（SSE 流式问答，前端气泡聊天）。`static/app.js` 的摘要面板已拆成「摘要 / 章节·时间轴 / 思维导图 / 问答」四个 tab，支持复制/下载 `.md`，并按 `url→feature` 缓存。**端到端验证**由仓库根 `e2e_test.py`（Playwright + 系统 Chrome，真实公网链接）回归。
 > **限流注意**：5 个 AI 功能端点共用一个 `ai` 限流组，默认 `RATE_AI_PER_MIN=**3**`（每 IP 每分钟）——这是刻意的 API 止损；60s 内连点 ≥4 个功能会触发**应用自身** `429`（非 deepseek 外部限流）。做多功能联排回归时务必将 `RATE_AI_PER_MIN` 调高（如 100/999）再启动，否则会误报为「请求失败」。M2.1/M2.2（v0.2.8/v0.2.9）已经历 `e2e_test.py` 全绿回归，含一次「默认限流下 429」的踩坑复跑（见 CHANGELOG 0.2.9）。
 
 ## 三、当前环境（已核实）
 
-- Windows 11 / Python 3.12.4；项目目录 `d:\LCP_agent\video_download`。
-- 依赖：`fastapi` / `uvicorn` / `pydantic` / `httpx` / `yt-dlp` / `python-dotenv` / `playwright`。核心后端仅 yt-dlp 一处真正重量级依赖（LLM 走 httpx）。
+- Windows 11 / Python 3.12.4；项目目录 `d:\LCP_agent\video_download`；**运行环境 `.venv`（`d:\LCP_agent\video_download\.venv\Scripts\python.exe`）**。
+- 依赖：`fastapi` / `uvicorn` / `pydantic` / `httpx` / `yt-dlp` / `python-dotenv` / `playwright` / `stripe`（v0.7.0 起）。核心后端仅 yt-dlp 一处真正重量级依赖（LLM 走 httpx，支付走 stripe SDK）。
 - ✅ **ffmpeg 已装**（Gyan.FFmpeg 9.0.1，`YTDLP_FFMPEG_LOCATION` 已指向其可执行目录）；无 ffmpeg 时仍会降级单文件 progressive，见坑 #2。
 - LLM 用 **OpenAI 兼容接口**：`OPENAI_API_KEY` / `OPENAI_BASE_URL` / `OPENAI_MODEL`，支持 DeepSeek/智谱/星火；无 Key 时字幕/摘要端点返回可读错误（`llm` 502）。
 - 配置全集中在 `app/config.py`（读 `.env`）。分组：监听 / 下载与临时文件 / ffmpeg / cookies与proxy / 抖音 / 安全限流 / LLM / UA。样例见 `.env.example`。
@@ -41,7 +42,7 @@
 |---|---|
 | v1 功能 | ① 核心：粘贴链接→解析(标题/缩略图/时长/全部格式)→选格式→下载 ② 批量 ③ 字幕提取/翻译 ④ AI 摘要（v1 全上） |
 | 前端形态 | 单页静态 HTML + Tailwind(Play CDN)，由 FastAPI `/static` 托管；纯手写、零构建、最轻量 |
-| 付费能力 | v1 只做「价格展示 + PRO 体系」：定价/权益/对比/升级 CTA；支付端点为占位门面，不接真实支付、无 DB、无账户 |
+| 付费能力 | ~~v1 只做「价格展示 + PRO 体系」占位~~ → **v0.7.0 已落地真实会员购买**（Stripe Checkout 一次性付款 + 账户体系，决策详见 [MEMBERSHIP.md](MEMBERSHIP.md) §0） |
 | 部署形态 | **公开上线给他人用** → 必须做安全防护（见 SECURITY.md） |
 | 实施节奏 | 核心业务先行跑通；前端打磨尽早完成；分析/设计文档同步沉淀到 `docs/` |
 | Llm | 不内置密钥、不做本地 whisper 转写（太重）；LLM 仅服务端持 Key |
@@ -127,12 +128,12 @@
 | 22 | **B站长视频 AI 字幕分段 + 限流假残缺**（v0.5.0） | ① subtitles 列表里同 `lan` 可能有多条分段，必须**全部下载并按 `from` 排序、`(from,to,content)` 去重**合并（`_merge_bodies`）。② `subtitle_url` 空串或 `body` 空是**限流降级响应非真无字幕**（「假残缺」），克制重试（player 层 ≤3 次退避 2/5s，单语言 body ≤2 次退避 5/8s），重取拿新 url（旧 url 带 auth_key 会过期）；**不可高频重取**，实测会触发 IP 级风控（冷却 30~60 分钟）。③ 单独请求几百条、批量只几条即限流 |
 | 23 | **风控期 B站会下发「跨视频脏字幕」，必须做内容一致性校验**（v0.5.0） | 排查"出海视频摘要串成帕尼尼减肥/杨幂"时定位：强风控期 player/v2 仍 200，但只下发 1 条残缺轨且 `subtitle_url` 指向**别的视频**的字幕（实测 body 20 条/跨度 54s，视频实为 211s；首句为不相干内容）。旧逻辑 `同lan条目 or 全量列表` 在人工轨 URL 空时**跨语言偷换**到脏 AI 轨，直接把错误内容喂给 LLM。修法：① `_ordered_candidates` 按语言优先级去重排候选，严格逐语言尝试、重试只取同 lan；② `_span_plausible` 用 view 的 `duration` 校验字幕跨度（0.35×~1.6×），不合格跳过，全不合格报错提示重试——**宁可不摘要也不返回跨视频内容**；③ routes 对 B站跳过 yt-dlp 无 cookie probe（其残缺清单曾把选源误导到片头音乐轨，摘要误判"纯音乐"） |
 
-## 六、已知限制（v1 有意为之）
+## 六、已知限制（有意为之）
 
-- 无持久化：重启丢进行中任务；单进程。
+- 无持久化：重启丢进行中任务；单进程（⚠️ 账户/订单/会员已持久化到 SQLite `data/vdl.db`，但进行中下载任务仍存内存）。
 - 字幕翻译/摘要依赖 LLM Key；无字幕视频无法摘要（**v1 不做本地 whisper 转写**）。
 - **B 站部分视频的字幕需登录态才下发**（`need_login_subtitle=True`，如 `BV1pGdsB2Ebq`、`BV1mAAmzqEfP`）。未提供 SESSDATA 时取不到真实字稿，此类视频**正确返回带登录引导语的 `no_subtitles`**（前端解析 B站后点 AI 功能会自动弹 SESSDATA 粘贴框，保存后自动重试）。提供 SESSDATA 有两条路径：① **前端粘贴（推荐）**：DevTools → Application → Cookies → bilibili.com 复制 SESSDATA 值（HttpOnly，不能用 `document.cookie`），localStorage 持久化；② 后端 `.env` 配 `COOKIES_FILE`（Netscape cookies.txt，宜含 SESSDATA）。⚠️ 高频请求会触发 B站 IP 级风控（残缺/空 URL/跨视频脏字幕，详见坑表 #21-23），冷却 30~60 分钟。
-- 付费为展示占位：不接真实支付、无账户体系、无 DB。
+- 会员体系 v1 有意不做（决策见 [MEMBERSHIP.md](MEMBERSHIP.md) §0/§1.5）：邮箱验证、忘记密码（需 SMTP）；自动续费/发票/自助退款；Stripe 不支持 CNY 收单（页面展示价与扣款币种解耦）；正式收款需境外主体 Stripe 账户 + live 密钥。
 - 抖音风控具时效性：签名/风控不定期换代，可 `DOUYIN_TIMEOUT_SECONDS` 调超时、`DOUYIN_ENABLED=false` 关停。
 - 前后端同部署、同源；缩略图走本站代理端点的防盗链在 v2 强化。
 
@@ -231,15 +232,27 @@
 - [x] **内容增强**：4 篇教程加 TL;DR 答案块（AI 引用优先摘录）；HowTo JSON-LD 与页面步骤一一对应；Organization 补 description + sameAs（GitHub 实体一致性）。
 - ⚠️ **上线（M3）动作**：部署后用 `.env` 中 INDEXNOW_KEY 把 6 个 URL POST 到 api.indexnow.org；后续内容更新同步维护 pages/llms-full.txt（与页面事实保持一致）。
 
+### M2.10 会员购买（v0.7.0，已实现 + 离线回归）
+> 给网站增加【用户购买会员】。方案与全部决策见 [MEMBERSHIP.md](MEMBERSHIP.md)；实现细节与修复见 [CHANGELOG](CHANGELOG.md) 0.7.0；支付安全清单见 [SECURITY.md](SECURITY.md) §10；接口契约见 [API.md](API.md) §12/§13。
+- [x] **数据层**：`app/db.py`（SQLite，5 张表，WAL + `BEGIN IMMEDIATE` 写锁事务）。
+- [x] **账户**：`app/auth.py`（PBKDF2 密码 / 不透明令牌仅存哈希 / 防枚举 / AI 日配额）+ `/api/auth/*`。
+- [x] **支付**：`app/billing.py`（Checkout 下单先建 pending 订单 / Webhook 原始体验签 / 三层幂等履约叠加时长）+ `/api/billing/*`。
+- [x] **权益拦截**：下载 `FREE_MAX_HEIGHT` 封顶与默认格式压制防绕过；翻译 403；AI 日配额（游客按 IP/账户按 ID）。
+- [x] **前端**：导航用户区 / 登录注册模态 / 支付弹窗与回跳轮询 / 会员中心 / 1080p+ 锁标。
+- [x] **验证**：`test_membership.py` 离线 29 项全绿（本地构造签名事件，不触网）；浏览器冒烟（注册→登录→升级→会员中心→退出）无 console 错误。
+- [x] **顺带修复**：`HTTPException` 错误 `detail` 包裹导致前端文案/弹窗检测失效（原 SECURITY 缺口 #4）。
+- [ ] **待运营者配合**：Stripe 测试模式真实联调（后台建 2 个 Price → `.env` 填 `sk_test_`/`price_` → `stripe listen` 拿 `whsec_` → 4242/0002 测试卡走单）——傻瓜式步骤见 [STRIPE-SETUP.md](STRIPE-SETUP.md)。
+
 ### M3 待办
-- [ ] 部署：反代 + HTTPS + ICP 备案
-- [ ] `--workers 1` 固化到部署脚本
+- [ ] 部署：反代 + HTTPS + ICP 备案（支付域名 HTTPS 为 Stripe 强制）
+- [ ] `--workers 1` 固化到部署脚本（⚠️ v0.7.0 起更重要：SQLite 单连接 + 内存限流均按单进程设计）
 - [ ] 缩略图代理强化（防盗链/referrer，已有基础的 `/api/thumbnail`）
 - [ ] 回归矩阵脚本化
+- [ ] Stripe 切 live：live 密钥 + Dashboard 配置线上 Webhook 端点 + Price 换 live（见 SECURITY.md 检查清单）
 - [ ] 可选 `APP_TOKEN` 鉴权说明
 
 ### v2 演进池（备选，按需排期）
-- 整套播放列表解析（当前 `noplaylist=True`）；真实支付替换 PRO 门面；Redis 换内存 job store（多实例+持久化）；可选本地 Whisper 转写（无字幕视频）；前端上传 cookies；下载历史&收藏夹；**导图交互化（折叠已于 v0.2.6、导出高清 PNG 已于 v0.2.8 落地，剩：动画、暗色主题、子图折叠记忆）**。
+- 整套播放列表解析（当前 `noplaylist=True`）；退款后自动回收会员/按比例扣减 + 发票 + 邮箱验证与忘记密码（需 SMTP）；Redis 换内存 job store + SQLite（多实例+持久化）；可选本地 Whisper 转写（无字幕视频）；前端上传 cookies；下载历史&收藏夹；**导图交互化（折叠已于 v0.2.6、导出高清 PNG 已于 v0.2.8 落地，剩：动画、暗色主题、子图折叠记忆）**。
 - > 注：**超长字幕 map-reduce 摘要**已在 v1.1 `AI_SINGLE_SHOT_CHARS` 分档实现，故从演进池移除。
 
 ## 九、文档地图与开发约定
@@ -248,8 +261,10 @@
 |---|---|
 | **本 PLAN** | ★ 先读：总方案 + 当前状态 + 关键坑 + 下一步 |
 | [DESIGN.md](DESIGN.md) | 架构详解：分层、Job 模型、并发、格式启发式、安全模型、选型理由 |
-| [API.md](API.md) | 接口契约：端点/字段/全局错误码 |
-| [SECURITY.md](SECURITY.md) | 威胁模型 + 已落实防护 + 上线检查清单 |
+| [API.md](API.md) | 接口契约：端点/字段/全局错误码（§12 账户 / §13 支付） |
+| [SECURITY.md](SECURITY.md) | 威胁模型 + 已落实防护 + 上线检查清单（§10 支付专项） |
 | [CHANGELOG.md](CHANGELOG.md) | 按里程碑记录：Added/Changed/Fixed/Verified + 决策与根因 |
+| [MEMBERSHIP.md](MEMBERSHIP.md) | v0.7.0 会员购买设计方案：决策 / 支付链路 / 表结构 / 权益矩阵 |
+| [STRIPE-SETUP.md](STRIPE-SETUP.md) | Stripe 运维操作指南：密钥申请 / 建价格 / CLI 转发 / 测试卡 / 无外网离线测试 |
 
 > **开发约定**：每次扩展**先更新本文件的「下一步」与里程碑状态**，再回 DESIGN/API/SECURITY/CHANGELOG 同步，保持 `docs/` 与代码一致。

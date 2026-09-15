@@ -19,7 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import tasks
+from . import db, tasks
 from .config import settings
 from .routes import router
 from .security import RateLimiter, register_exception_handlers, SecurityHeadersMiddleware
@@ -47,8 +47,13 @@ def _wipe_expired_temp() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _wipe_expired_temp()
+    db.init_db()
     tasks.start_cleanup_task()
-    logger.info("vdl app started, temp_dir=%s", settings.temp_dir)
+    logger.info(
+        "vdl app started, temp_dir=%s, billing_enabled=%s",
+        settings.temp_dir,
+        settings.billing_enabled,
+    )
     yield
     logger.info("vdl app stopped")
 

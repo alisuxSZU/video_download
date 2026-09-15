@@ -23,6 +23,12 @@ temp/
 tmp/
 screenshots/
 
+# ---- SQLite（会员/订单/令牌，本地持久化数据，绝不提交）----
+data/
+*.db
+*.db-wal
+*.db-shm
+
 # ---- 本地测试与临时验证脚本（不入仓）----
 /test_*.py
 /_*.py

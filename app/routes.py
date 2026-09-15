@@ -1,4 +1,4 @@
-"""API 路由：解析 / 下载 / 批量 / 轮询 / 成品 / 字幕 / AI 摘要。
+"""API 路由：解析 / 下载 / 批量 / 轮询 / 成品 / 字幕 / AI / 账户 / 支付。
 
 连接前端与后端能力，统一做限流、URL 校验、友好错误映射。
 """
@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import mimetypes
 import shutil
 import threading
@@ -16,12 +17,14 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 
-from . import ai, downloader, tasks
+from . import ai, auth, billing, db, downloader, tasks
 from .config import settings
 from .models import (
     AskRequest,
+    AuthRequest,
     BatchRequest,
     ChaptersRequest,
+    CheckoutRequest,
     DownloadRequest,
     MindmapRequest,
     ParseRequest,
@@ -30,6 +33,8 @@ from .models import (
     JobStatus,
 )
 from .security import friendly_error, RateError, validate_url, error_status
+
+logger = logging.getLogger("app.routes")
 
 router = APIRouter(prefix="/api")
 
@@ -63,6 +68,190 @@ def _resolve_job(job_id: str):
     if not job:
         raise HTTPException(status_code=404, detail={"ok": False, "error": "任务不存在或已过期"})
     return job
+
+
+def _pro_required(message: str, *, used: int | None = None) -> JSONResponse:
+    detail = {"ok": False, "error": message, "code": "pro_required"}
+    if used is not None:
+        detail["ai_used_today"] = used
+        detail["ai_daily_limit"] = settings.ai_free_daily_limit
+    return JSONResponse(status_code=403, content=detail)
+
+
+async def _ai_gate(request: Request) -> dict | None:
+    """AI 端点统一闸门：PRO 走更高分钟级限流；非 PRO 先查每日配额（成功后才计数）。
+
+    返回当前用户（可能为 None=游客）；配额超限抛 403 pro_required。
+    """
+    user = auth.user_from_request(request)
+    limit = settings.ai_pro_rate_per_min if auth.is_pro(user) else settings.ai_rate_per_min
+    await _rate(request, "ai", limit)
+    if not auth.is_pro(user):
+        subject = auth.quota_subject(user, _client_ip(request))
+        used = auth.ai_used_today(subject)
+        if used >= settings.ai_free_daily_limit:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "ok": False,
+                    "error": f"免费额度已用完（每日 {settings.ai_free_daily_limit} 次 AI 功能），升级 PRO 不限次",
+                    "code": "pro_required",
+                    "ai_used_today": used,
+                    "ai_daily_limit": settings.ai_free_daily_limit,
+                },
+            )
+    return user
+
+
+def _consume_ai(user: dict | None, request: Request) -> None:
+    """AI 调用成功后计数（PRO 不计数）。"""
+    if not auth.is_pro(user):
+        auth.consume_ai_call(auth.quota_subject(user, _client_ip(request)))
+
+
+# ---------------- 账户：注册 / 登录 / 退出 / 当前用户 ----------------
+@router.post("/auth/register")
+async def register(req: AuthRequest, request: Request):
+    await _rate(request, "auth", settings.auth_rate_per_min)
+    try:
+        result = await asyncio.get_running_loop().run_in_executor(
+            None, lambda: auth.create_user(req.email, req.password)
+        )
+    except auth.AuthError as exc:
+        return JSONResponse(
+            status_code=exc.status, content={"ok": False, "error": exc.message, "code": exc.code}
+        )
+    return {
+        "ok": True,
+        "token": result["token"],
+        "user": auth.public_user(result["user"], _client_ip(request)),
+    }
+
+
+@router.post("/auth/login")
+async def login(req: AuthRequest, request: Request):
+    await _rate(request, "auth", settings.auth_rate_per_min)
+    try:
+        result = await asyncio.get_running_loop().run_in_executor(
+            None, lambda: auth.authenticate(req.email, req.password)
+        )
+    except auth.AuthError as exc:
+        return JSONResponse(
+            status_code=exc.status, content={"ok": False, "error": exc.message, "code": exc.code}
+        )
+    return {
+        "ok": True,
+        "token": result["token"],
+        "user": auth.public_user(result["user"], _client_ip(request)),
+    }
+
+
+@router.post("/auth/logout")
+async def logout(request: Request):
+    token = auth.bearer_token(request)
+    if token:
+        await asyncio.get_running_loop().run_in_executor(None, auth.revoke_token, token)
+    return {"ok": True}
+
+
+@router.get("/auth/me")
+async def me(request: Request):
+    """可选登录；未登录返回 user=null（不报错）。附 AI 配额，供前端渲染状态。"""
+    user = auth.user_from_request(request)
+    ip = _client_ip(request)
+    if user is None:
+        used = auth.ai_used_today(auth.quota_subject(None, ip))
+        return {
+            "ok": True,
+            "user": None,
+            "is_pro": False,
+            "ai_used_today": used,
+            "ai_daily_limit": settings.ai_free_daily_limit,
+            # 免费用户清晰度封顶（前端据此渲染格式加锁 UI；0 表示不封顶）
+            "free_max_height": settings.free_max_height,
+        }
+    pub = auth.public_user(user, ip)
+    pro = pub["is_pro"]
+    return {
+        "ok": True,
+        "user": pub,
+        "is_pro": pro,
+        "free_max_height": 0 if pro else settings.free_max_height,
+    }
+
+
+# ---------------- 支付：创建 Checkout / Stripe Webhook / 订单记录 ----------------
+@router.post("/billing/checkout")
+async def billing_checkout(req: CheckoutRequest, request: Request):
+    user = auth.require_user(request)
+    await _rate(request, "billing", settings.billing_rate_per_min)
+    if not settings.billing_enabled:
+        return JSONResponse(
+            status_code=503,
+            content={"ok": False, "error": "支付功能即将上线，敬请期待", "code": "billing_disabled"},
+        )
+    base = settings.site_base_url or str(request.base_url).rstrip("/")
+    try:
+        result = await asyncio.get_running_loop().run_in_executor(
+            None, lambda: billing.create_checkout(user, req.plan, base)
+        )
+    except billing.BillingError as exc:
+        return JSONResponse(
+            status_code=exc.status, content={"ok": False, "error": exc.message, "code": exc.code}
+        )
+    return {"ok": True, **result}
+
+
+@router.post("/billing/stripe/webhook")
+async def stripe_webhook(request: Request):
+    """Stripe 回调：必须用原始字节体验签（不能先 JSON 解析）。
+
+    幂等：event_id 去重 + 订单 pending→paid 条件更新（见 billing.fulfill_order）。
+    只有返回 2xx，Stripe 才停止重发；5xx/400 会按策略重试。
+    """
+    raw = await request.body()
+    sig = request.headers.get("stripe-signature", "")
+    try:
+        event = await asyncio.get_running_loop().run_in_executor(
+            None, billing.construct_event, raw, sig
+        )
+    except billing.BillingError as exc:
+        return JSONResponse(
+            status_code=exc.status, content={"ok": False, "error": exc.message, "code": exc.code}
+        )
+    except Exception as exc:
+        logger.warning("stripe webhook signature verification failed: %s", exc)
+        return JSONResponse(
+            status_code=400, content={"ok": False, "error": "invalid signature"}
+        )
+
+    event_id = str(event.id)
+    event_type = str(event.type)
+    if billing.is_duplicate_event(event_id, event_type):
+        logger.info("duplicate stripe event ignored: %s", event_id)
+        return {"ok": True, "received": True, "duplicate": True}
+
+    try:
+        await asyncio.get_running_loop().run_in_executor(None, billing.handle_event, event)
+    except billing.BillingError as exc:
+        # 可修复的服务端错误（如库异常）：移除事件占位并返回 500，让 Stripe 重试；
+        # 数据本身非法（4xx，重试无意义）：记录后回 200，避免无意义重发。
+        billing.forget_event(event_id)
+        if exc.status >= 500:
+            logger.exception("stripe event handling failed (retryable): %s", event_id)
+            return JSONResponse(status_code=500, content={"ok": False, "error": "retry"})
+        logger.warning("stripe event bad payload %s: %s", event_id, exc.message)
+    except Exception:
+        billing.forget_event(event_id)
+        logger.exception("stripe event handling failed (retryable): %s", event_id)
+        return JSONResponse(status_code=500, content={"ok": False, "error": "retry"})
+    return {"ok": True, "received": True}
+
+
+@router.get("/billing/orders")
+async def billing_orders(request: Request):
+    user = auth.require_user(request)
+    return {"ok": True, "orders": billing.list_orders(user["user_id"])}
 
 
 # ---------------- 健康检查 ----------------
@@ -132,7 +321,10 @@ async def download(req: DownloadRequest, request: Request):
     if tasks.active_or_queued_count() >= tasks.MAX_ACTIVE_JOBS:
         raise HTTPException(status_code=503, detail={"ok": False, "error": "当前任务较多，请稍后重试"})
 
-    job = tasks.create_job(url, req.format_id)
+    # PRO 不限清晰度；免费用户封顶 free_max_height（默认 720p），任务层二次硬拦截
+    user = auth.user_from_request(request)
+    max_height = 0 if auth.is_pro(user) else settings.free_max_height
+    job = tasks.create_job(url, req.format_id, max_height=max_height)
     tasks.start_download(job)
     return {"ok": True, "job_id": job.id, "status": job.status}
 
@@ -148,6 +340,9 @@ async def download_batch(req: BatchRequest, request: Request):
             detail={"ok": False, "error": f"单次最多 {settings.max_batch} 条"},
         )
 
+    # 批量下载对所有人开放；清晰度封顶沿用单条下载同一规则
+    user = auth.user_from_request(request)
+    max_height = 0 if auth.is_pro(user) else settings.free_max_height
     jobs_payload = []
     for item in req.items:
         try:
@@ -155,7 +350,7 @@ async def download_batch(req: BatchRequest, request: Request):
         except Exception as exc:
             jobs_payload.append({"url": item.url, "job_id": None, "status": "invalid", "error": friendly_error(exc)["error"]})
             continue
-        job = tasks.create_job(url, item.format_id)
+        job = tasks.create_job(url, item.format_id, max_height=max_height)
         tasks.start_download(job)
         jobs_payload.append({"url": item.url, "job_id": job.id, "status": job.status})
 
@@ -199,7 +394,12 @@ async def delete_job(job_id: str):
 # ---------------- 字幕 提取/翻译 ----------------
 @router.post("/subtitles")
 async def subtitles(req: SubtitleRequest, request: Request):
-    await _rate(request, "ai", settings.ai_rate_per_min)
+    user = auth.user_from_request(request)
+    limit = settings.ai_pro_rate_per_min if auth.is_pro(user) else settings.ai_rate_per_min
+    await _rate(request, "ai", limit)
+    # 字幕翻译为 PRO 专属；仅提取（target_lang 为空）免费开放
+    if req.target_lang and not auth.is_pro(user):
+        return _pro_required("字幕翻译为 PRO 会员专属功能，升级后可一键翻译成多语言")
     try:
         url = validate_url(req.url)
     except Exception as exc:
@@ -312,7 +512,7 @@ def _collect_segments_sync(url: str, bili_sessdata: str | None = None) -> tuple[
 
 @router.post("/ai/summary")
 async def summary(req: SummaryRequest, request: Request):
-    await _rate(request, "ai", settings.ai_rate_per_min)
+    user = await _ai_gate(request)
     try:
         url = validate_url(req.url)
     except Exception as exc:
@@ -323,6 +523,7 @@ async def summary(req: SummaryRequest, request: Request):
             None, lambda: _collect_segments_sync(url, req.bili_sessdata)
         )
         data = await ai.summarize(segments, meta)
+        _consume_ai(user, request)  # 成功才计入免费每日配额
         # ai.summarize 返回完整 dict：含 summary(全文 md 字符串)、theme/overview/
         # key_points/keywords/chapters/mindmap，且已 update(meta)。整体展开返回，
         # 前端 renderSummary 取 d.summary 渲染 Markdown。
@@ -338,7 +539,7 @@ async def summary(req: SummaryRequest, request: Request):
 @router.post("/ai/chapters")
 async def chapters(req: ChaptersRequest, request: Request):
     """独立生成「章节·时间轴」（单独调用 LLM，不复用摘要）。"""
-    await _rate(request, "ai", settings.ai_rate_per_min)
+    user = await _ai_gate(request)
     try:
         url = validate_url(req.url)
     except Exception as exc:
@@ -349,6 +550,7 @@ async def chapters(req: ChaptersRequest, request: Request):
             None, lambda: _collect_segments_sync(url, req.bili_sessdata)
         )
         chapters = await ai.generate_chapters(segments, meta)
+        _consume_ai(user, request)
         return {"ok": True, "chapters": chapters, **meta}
     except downloader._SubtitleError as exc:
         return JSONResponse(status_code=502, content={"ok": False, "error": str(exc), "code": "no_subtitles"})
@@ -361,7 +563,7 @@ async def chapters(req: ChaptersRequest, request: Request):
 @router.post("/ai/mindmap")
 async def mindmap(req: MindmapRequest, request: Request):
     """独立生成「思维导图」树（单独调用 LLM，不复用摘要）。"""
-    await _rate(request, "ai", settings.ai_rate_per_min)
+    user = await _ai_gate(request)
     try:
         url = validate_url(req.url)
     except Exception as exc:
@@ -372,6 +574,7 @@ async def mindmap(req: MindmapRequest, request: Request):
             None, lambda: _collect_segments_sync(url, req.bili_sessdata)
         )
         mm = await ai.mindmap(segments, meta)
+        _consume_ai(user, request)
         return {"ok": True, "mindmap": mm, **meta}
     except downloader._SubtitleError as exc:
         return JSONResponse(status_code=502, content={"ok": False, "error": str(exc), "code": "no_subtitles"})
@@ -384,7 +587,7 @@ async def mindmap(req: MindmapRequest, request: Request):
 @router.post("/ai/ask")
 async def ask(req: AskRequest, request: Request):
     """对视频内容追问（SSE 流式）。逐 token 推送答案，前端据此拼接显示。"""
-    await _rate(request, "ai", settings.ai_rate_per_min)
+    user = await _ai_gate(request)
     try:
         url = validate_url(req.url)
     except Exception as exc:
@@ -417,6 +620,11 @@ async def ask(req: AskRequest, request: Request):
             # 出错时以 error 帧终止，不补发 done：否则前端会用 done 覆盖「出错」状态，把失败显示成无回答。
             yield f"data: {json.dumps({'error': str(exc)})}\n\n"
             return
+        # 回答成功生成才计免费配额（no_subtitles / LLM 失败不计）
+        try:
+            _consume_ai(user, request)
+        except Exception:  # 配额计数失败不应影响已成功的回答
+            logger.exception("ai quota consume failed")
         yield f"data: {json.dumps({'done': True})}\n\n"
 
     # Cache-Control/X-Accel-Buffering：阻止 nginx 等反向代理把 SSE 缓冲到收尾才一次吐出，确保逐帧流式下发。
